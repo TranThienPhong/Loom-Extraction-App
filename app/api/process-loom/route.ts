@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { downloadLoomVideo, cleanupVideo } from '@/lib/videoDownloader'
+import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
 import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
-import { parseManualTranscript, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
-import { analyzeTranscriptWithAI } from '@/lib/aiAnalyzer'
+import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
+import { analyzeTranscriptWithAI } from '@/lib/aiProviders'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -47,15 +47,22 @@ export async function POST(request: NextRequest) {
       console.log('Using manually pasted transcript')
       transcript = parseManualTranscript(manualTranscript)
     } else {
-      // TODO: Implement automatic transcript extraction via Apify or other method
-      // For now, return an error asking for manual transcript
-      return NextResponse.json(
-        { 
-          error: 'Automatic transcript extraction not yet implemented. Please check "Paste transcript manually" and provide the transcript.',
-          needsManualTranscript: true 
-        },
-        { status: 400 }
-      )
+      // Automatic transcript extraction
+      console.log('Downloading and parsing automatic transcript...')
+      try {
+        const subtitlePath = await downloadLoomSubtitles(loomUrl)
+        transcript = parseJsonSubtitles(subtitlePath)
+        console.log(`Automatically extracted ${transcript.length} transcript entries`)
+      } catch (error) {
+        console.error('Error with automatic transcript:', error)
+        return NextResponse.json(
+          { 
+            error: `Failed to automatically extract transcript: ${error instanceof Error ? error.message : String(error)}. Please check "Paste transcript manually" and provide the transcript.`,
+            needsManualTranscript: true 
+          },
+          { status: 400 }
+        )
+      }
     }
 
     if (transcript.length === 0) {

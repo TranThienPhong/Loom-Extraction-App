@@ -1,4 +1,5 @@
 import { timestampToSeconds, secondsToTimestamp } from './frameExtractor'
+import * as fs from 'fs'
 
 export interface TranscriptEntry {
   timestamp_seconds: number
@@ -89,6 +90,39 @@ export function parseSRTTranscript(srtContent: string): TranscriptEntry[] {
 export function extractLoomVideoId(url: string): string | null {
   const match = url.match(/loom\.com\/share\/([a-zA-Z0-9]+)/)
   return match ? match[1] : null
+}
+
+/**
+ * Parses Loom's JSON subtitle format downloaded via yt-dlp
+ * The JSON contains a "phrases" array with timestamp and text
+ */
+export function parseJsonSubtitles(subtitlePath: string): TranscriptEntry[] {
+  try {
+    const fileContent = fs.readFileSync(subtitlePath, 'utf-8')
+    const data = JSON.parse(fileContent)
+    
+    if (!data.phrases || !Array.isArray(data.phrases)) {
+      throw new Error('Invalid subtitle format: missing phrases array')
+    }
+
+    const entries: TranscriptEntry[] = []
+
+    for (const phrase of data.phrases) {
+      if (phrase.ts !== undefined && phrase.value) {
+        const seconds = Math.floor(phrase.ts) // ts is already in seconds
+        entries.push({
+          timestamp_seconds: seconds,
+          timestamp_label: secondsToTimestamp(seconds),
+          text: phrase.value.trim(),
+        })
+      }
+    }
+
+    return entries
+  } catch (error) {
+    console.error('Error parsing JSON subtitles:', error)
+    throw new Error(`Failed to parse JSON subtitles: ${error instanceof Error ? error.message : String(error)}`)
+  }
 }
 
 /**
