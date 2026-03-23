@@ -162,7 +162,21 @@ Processes a Loom video and extracts tasks.
 
 ## Deployment
 
-### Deploy to Vercel
+### ⚠️ IMPORTANT: Vercel Limitations
+
+**This app requires system binaries (yt-dlp and ffmpeg) that are NOT available on Vercel's serverless platform.**
+
+- ✅ The UI will deploy and display correctly
+- ❌ Video processing features will NOT work
+- ❌ API calls will fail without the required dependencies
+
+**See [VERCEL_DEPLOYMENT_WARNING.md](VERCEL_DEPLOYMENT_WARNING.md) for detailed solutions and alternatives.**
+
+**Recommended:** Deploy to a VPS, Railway.app, or Render.com where you can install system dependencies.
+
+### Deploy to Vercel (UI Preview Only)
+
+⚠️ **Use this only for testing the frontend UI.** Video processing will not work.
 
 1. **Push your code to GitHub:**
    ```bash
@@ -177,14 +191,9 @@ Processes a Loom video and extracts tasks.
    - Add environment variables in Vercel dashboard:
      - `ANTHROPIC_API_KEY`
 
-3. **Configure build settings:**
-   - Framework: Next.js
-   - Build command: `npm run build`
-   - Output directory: `.next`
+The build will succeed but the `/api/process-loom` endpoint will fail at runtime due to missing system dependencies.
 
-**Note:** yt-dlp and ffmpeg may need special configuration on Vercel. Consider using Vercel's Edge Functions or deploying to a VPS with full system access for production use.
-
-### Alternative: Deploy to VPS (Recommended)
+### Deploy to VPS (Fully Functional - Recommended)
 
 For full control over system dependencies (yt-dlp, ffmpeg):
 
