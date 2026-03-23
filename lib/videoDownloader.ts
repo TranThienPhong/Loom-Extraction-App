@@ -11,11 +11,33 @@ export interface VideoDownloadResult {
 }
 
 /**
+ * Check if yt-dlp is installed
+ */
+async function checkYtDlpInstalled(): Promise<boolean> {
+  try {
+    await execAsync('which yt-dlp')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Downloads a Loom video using yt-dlp
  * Requires yt-dlp to be installed on the system
  * Install: sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp
  */
 export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadResult> {
+  // Check if yt-dlp is installed
+  const ytDlpInstalled = await checkYtDlpInstalled()
+  if (!ytDlpInstalled) {
+    throw new Error(
+      'yt-dlp is not installed. Please install it first:\n\n' +
+      'Linux/Mac: sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp\n\n' +
+      'Or run: ./check-dependencies.sh for more information.'
+    )
+  }
+
   // Extract video ID from URL
   const videoIdMatch = loomUrl.match(/loom\.com\/share\/([a-zA-Z0-9]+)/)
   if (!videoIdMatch) {

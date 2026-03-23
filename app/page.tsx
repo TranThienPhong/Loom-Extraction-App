@@ -7,12 +7,14 @@ export default function Home() {
   const [loomUrl, setLoomUrl] = useState('')
   const [transcript, setTranscript] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [useManualTranscript, setUseManualTranscript] = useState(false)
   const router = useRouter()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
+    setError(null)
 
     try {
       const response = await fetch('/api/process-loom', {
@@ -33,11 +35,11 @@ export default function Home() {
         sessionStorage.setItem('loomResults', JSON.stringify(data))
         router.push('/results')
       } else {
-        alert(`Error: ${data.error}`)
+        setError(data.error || 'An error occurred while processing the video')
         setLoading(false)
       }
     } catch (error) {
-      alert('An error occurred while processing the video')
+      setError('An error occurred while processing the video')
       console.error(error)
       setLoading(false)
     }
@@ -73,6 +75,49 @@ export default function Home() {
           </p>
         </div>
 
+        {error && (
+          <div className="bg-red-50 border-l-4 border-red-500 p-6 mb-6 rounded-lg">
+            <div className="flex">
+              <div className="flex-shrink-0">
+                <svg className="h-6 w-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <div className="ml-3 flex-1">
+                <h3 className="text-sm font-medium text-red-800">Error Processing Video</h3>
+                <div className="mt-2 text-sm text-red-700 whitespace-pre-wrap">
+                  {error}
+                </div>
+                {error.includes('yt-dlp') && (
+                  <div className="mt-4 text-sm text-red-700">
+                    <p className="font-semibold">To install yt-dlp:</p>
+                    <code className="block mt-2 bg-red-100 p-2 rounded text-xs">
+                      sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp
+                    </code>
+                  </div>
+                )}
+                {error.includes('ffmpeg') && (
+                  <div className="mt-4 text-sm text-red-700">
+                    <p className="font-semibold">To install ffmpeg:</p>
+                    <code className="block mt-2 bg-red-100 p-2 rounded text-xs">
+                      sudo apt-get update && sudo apt-get install ffmpeg
+                    </code>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setError(null)}
+                className="ml-3 flex-shrink-0 text-red-500 hover:text-red-700"
+              >
+                <span className="sr-only">Dismiss</span>
+                <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="bg-white rounded-lg shadow-xl p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
@@ -86,9 +131,9 @@ export default function Home() {
                 onChange={(e) => setLoomUrl(e.target.value)}
                 placeholder="https://www.loom.com/share/..."
                 required
-                className="w-full px-4 py-3 text-black border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full px-4 py-3 text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
               />
-              <p className="mt-2 text-sm text-gray-400">
+              <p className="mt-2 text-sm text-gray-500">
                 Paste a public Loom video link
               </p>
             </div>
@@ -120,7 +165,7 @@ export default function Home() {
 0:15 - The button color should be blue not green
 0:23 - Loading spinner is missing on the submit button"
                     rows={10}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm"
+                    className="w-full px-4 py-3 text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm"
                   />
                   <p className="mt-2 text-sm text-gray-500">
                     Format: "timestamp - description" on each line (e.g., "0:05 - Fix header alignment")

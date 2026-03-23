@@ -12,11 +12,34 @@ export interface FrameExtractionOptions {
 }
 
 /**
+ * Check if ffmpeg is installed
+ */
+async function checkFfmpegInstalled(): Promise<boolean> {
+  try {
+    await execAsync('which ffmpeg')
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * Extracts a frame from a video at a specific timestamp using ffmpeg
  * Requires ffmpeg to be installed on the system
  * Install: sudo apt-get install ffmpeg (Ubuntu/Debian) or brew install ffmpeg (macOS)
  */
 export async function extractFrame(options: FrameExtractionOptions): Promise<string> {
+  // Check if ffmpeg is installed
+  const ffmpegInstalled = await checkFfmpegInstalled()
+  if (!ffmpegInstalled) {
+    throw new Error(
+      'ffmpeg is not installed. Please install it first:\n\n' +
+      'Ubuntu/Debian: sudo apt-get update && sudo apt-get install ffmpeg\n' +
+      'macOS: brew install ffmpeg\n\n' +
+      'Or run: ./check-dependencies.sh for more information.'
+    )
+  }
+
   const { videoPath, timestampSeconds, outputDir } = options
 
   if (!fs.existsSync(videoPath)) {
