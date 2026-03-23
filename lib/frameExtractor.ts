@@ -24,7 +24,8 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   }
 
   // Create output directory
-  const frameDir = outputDir || path.join(process.cwd(), 'public', 'temp', 'frames')
+  // @ts-ignore - turbopack ignore: dynamic path only used at runtime
+  const frameDir = outputDir || path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames')
   if (!fs.existsSync(frameDir)) {
     fs.mkdirSync(frameDir, { recursive: true })
   }
@@ -98,7 +99,8 @@ export function secondsToTimestamp(seconds: number): string {
  * Clean up extracted frames
  */
 export function cleanupFrames(frameDir?: string): void {
-  const dir = frameDir || path.join(process.cwd(), 'public', 'temp', 'frames')
+  // @ts-ignore - turbopack ignore: dynamic path only used at runtime
+  const dir = frameDir || path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames')
   
   try {
     if (fs.existsSync(dir)) {

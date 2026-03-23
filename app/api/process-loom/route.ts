@@ -82,13 +82,19 @@ export async function POST(request: NextRequest) {
 
     // Step 4: Extract frames for each task
     console.log('Step 4: Extracting video frames...')
+    
+    // Ensure videoPath is not null before proceeding
+    if (!videoPath) {
+      throw new Error('Video path is not set')
+    }
+    
     const tasksWithImages = await Promise.all(
       tasks.map(async (task, index) => {
         try {
           console.log(`Extracting frame ${index + 1}/${tasks.length} at ${task.timestamp_label}`)
           
           const framePath = await extractFrame({
-            videoPath,
+            videoPath: videoPath!,
             timestampSeconds: task.timestamp_seconds,
           })
 

@@ -24,7 +24,8 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
   const videoId = videoIdMatch[1]
 
   // Create temp directory if it doesn't exist
-  const tempDir = path.join(process.cwd(), 'temp')
+  // @ts-ignore - turbopack ignore: dynamic path only used at runtime
+  const tempDir = path.join(/*turbopackIgnore: true*/ process.cwd(), 'temp')
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true })
   }
