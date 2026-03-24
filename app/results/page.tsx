@@ -175,11 +175,11 @@ export default function Results() {
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <h2 className="text-xl font-bold text-gray-900 mb-2">
-                      {index + 1}. {task.task_name}
-                    </h2>
-                    <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border-2 border-indigo-300">
+                      {index + 1}. {task.task_name} <span></span><span className="inline-block bg-indigo-100 text-indigo-800 text-lg font-semibold px-3 py-1 border-2 ml-[0.2rem] border-indigo-300">
                       ⏱ {task.timestamp_label}
                     </span>
+                    </h2>
+                    
                   </div>
                 </div>
 
@@ -187,7 +187,14 @@ export default function Results() {
                   {task.task_description}
                 </p>
 
+
                 {(task.image_url || task.image_base64) && (
+                  <a
+                  href={task.loom_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block font-semibold transition-colors justify-items-end   "
+                >
                   <div className="mb-4 border-2 border-gray-300">
                     <img
                       src={imageErrors[index] && task.image_base64 ? task.image_base64 : task.image_url}
@@ -201,6 +208,7 @@ export default function Results() {
                       }}
                     />
                   </div>
+                  </a>
                 )}
 
                 <a
