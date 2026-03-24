@@ -14,6 +14,19 @@ A web application that automatically extracts actionable tasks from Loom video f
 - 📄 **Rich PDF Export**: Export tasks as PDF with embedded screenshots (clickable to Loom)
 - 🎨 **Clean UI**: Modern, responsive interface built with Tailwind CSS
 
+## ⚠️ Important: Deployment Requirements
+
+**This app CANNOT be deployed to Vercel or Netlify** because it requires system dependencies (`yt-dlp` and `ffmpeg`) that serverless platforms don't support.
+
+**✅ Supported Platforms:**
+- Railway.app (Recommended - easiest)
+- Render.com (Free tier available)
+- DigitalOcean VPS
+- Any VPS (AWS EC2, Linode, Vultr)
+- Docker containers
+
+**See [DEPLOYMENT.md](DEPLOYMENT.md) for complete deployment instructions.**
+
 ## Prerequisites
 
 Before running this application, you need to install the following system dependencies:
@@ -165,19 +178,50 @@ Processes a Loom video and extracts tasks.
 
 ## Deployment
 
-### ⚠️ IMPORTANT: Vercel Limitations
+### ⚠️ CRITICAL: Vercel/Netlify Will NOT Work
 
-**This app requires system binaries (yt-dlp and ffmpeg) that are NOT available on Vercel's serverless platform.**
+**This app requires system dependencies (`yt-dlp` and `ffmpeg`) that serverless platforms don't provide.**
 
-- ✅ The UI will deploy and display correctly
-- ❌ Video processing features will NOT work
-- ❌ API calls will fail without the required dependencies
+**What happens on Vercel:**
+- ✅ UI deploys correctly
+- ❌ Video processing fails with "yt-dlp is not installed"
+- ❌ App is unusable
 
-**See [VERCEL_DEPLOYMENT_WARNING.md](VERCEL_DEPLOYMENT_WARNING.md) for detailed solutions and alternatives.**
+### ✅ Where to Deploy (Recommended Options)
 
-**Recommended:** Deploy to a VPS, Railway.app, or Render.com where you can install system dependencies.
+**Best Option: Railway.app**
+- Easiest deployment (one-click from GitHub)
+- `nixpacks.toml` is already configured
+- Free $5/month credit
+- **Instructions:** See [DEPLOYMENT.md](DEPLOYMENT.md)
 
-### Deploy to Vercel (UI Preview Only)
+**Alternative: VPS (Full Control)**
+- DigitalOcean, Linode, AWS EC2, Vultr
+- Install yt-dlp and ffmpeg manually
+- Run with PM2 for reliability
+- **Instructions:** See [DEPLOYMENT.md](DEPLOYMENT.md)
+
+**Alternative: Render.com**
+- Free tier available
+- Docker support (Dockerfile included)
+- **Instructions:** See [DEPLOYMENT.md](DEPLOYMENT.md)
+
+### Quick Start - Railway Deployment
+
+1. **Push code to GitHub** (including `nixpacks.toml`)
+2. **Go to [Railway.app](https://railway.app)**
+3. **New Project** → Deploy from GitHub
+4. **Select** your Loom-Extraction-App repo
+5. **Add environment variables:**
+   - `ANTHROPIC_API_KEY`
+   - `OPENROUTER_API_KEY`
+6. **Deploy!** Railway builds and runs automatically
+
+**Complete deployment guide with all platforms: [DEPLOYMENT.md](DEPLOYMENT.md)**
+
+---
+
+### Old Vercel Section (UI Preview Only - Not Recommended)
 
 ⚠️ **Use this only for testing the frontend UI.** Video processing will not work.
 
