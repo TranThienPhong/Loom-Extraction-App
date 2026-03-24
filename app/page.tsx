@@ -59,7 +59,10 @@ export default function Home() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <div className="inline-block animate-spin h-16 w-16 border-b-4 border-indigo-600 mb-4" style={{borderRadius: 0}}></div>
+          <div className="relative inline-block w-16 h-16 mb-4">
+            <div className="absolute inset-0 border-4 border-indigo-200"></div>
+            <div className="absolute inset-0 border-4 border-t-indigo-600 border-r-indigo-600 border-b-transparent border-l-transparent animate-spin"></div>
+          </div>
           <h2 className="text-2xl font-semibold text-gray-900">Processing your Loom video...</h2>
           <p className="text-gray-600 mt-2">This may take a few minutes</p>
 

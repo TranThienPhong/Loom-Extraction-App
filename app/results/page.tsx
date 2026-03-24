@@ -9,12 +9,14 @@ interface Task {
   task_name: string
   task_description: string
   image_url: string
+  image_base64?: string // Base64 fallback for Railway/production
   loom_url: string
 }
 
 export default function Results() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [videoId, setVideoId] = useState('')
+  const [imageErrors, setImageErrors] = useState<{[key: number]: boolean}>({})
   const router = useRouter()
 
   useEffect(() => {
@@ -68,8 +70,9 @@ export default function Results() {
       doc.text(splitDescription, 20, yPosition)
       yPosition += splitDescription.length * 5 + 5
 
-      // Add image if available
-      if (task.image_url) {
+      // Add image if available (try base64 first for Railway compatibility)
+      const imageSource = task.image_base64 || task.image_url
+      if (imageSource) {
         try {
           // Check if we need a new page for the image
           if (yPosition > 180) {
@@ -77,14 +80,20 @@ export default function Results() {
             yPosition = 20
           }
 
-          // Fetch and embed the actual image
-          const response = await fetch(task.image_url)
-          const blob = await response.blob()
-          const base64 = await new Promise<string>((resolve) => {
-            const reader = new FileReader()
-            reader.onloadend = () => resolve(reader.result as string)
-            reader.readAsDataURL(blob)
-          })
+          let base64: string
+          
+          // Use base64 if available, otherwise fetch the image
+          if (task.image_base64) {
+            base64 = task.image_base64
+          } else {
+            const response = await fetch(imageSource)
+            const blob = await response.blob()
+            base64 = await new Promise<string>((resolve) => {
+              const reader = new FileReader()
+              reader.onloadend = () => resolve(reader.result as string)
+              reader.readAsDataURL(blob)
+            })
+          }
 
           // Add image to PDF (scaled to fit width of 170)
           const imgWidth = 170
@@ -166,12 +175,11 @@ export default function Results() {
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <h2 className="text-xl font-bold text-gray-900 mb-2">
-                      {index + 1}. {task.task_name}<span> </span>   
-                      <span className="inline-block bg-indigo-100 text-indigo-800 text-lg font-medium px-3 py-1 rounded-full">
-                      ⏱{task.timestamp_label}
-                    </span>
+                      {index + 1}. {task.task_name}
                     </h2>
-                    
+                    <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border-2 border-indigo-300">
+                      ⏱ {task.timestamp_label}
+                    </span>
                   </div>
                 </div>
 
@@ -179,18 +187,19 @@ export default function Results() {
                   {task.task_description}
                 </p>
 
-                {task.image_url && (
-                  <div className="relative mb-4 group">
+                {(task.image_url || task.image_base64) && (
+                  <div className="mb-4 border-2 border-gray-300">
                     <img
-                      src={task.image_url}
+                      src={imageErrors[index] && task.image_base64 ? task.image_base64 : task.image_url}
                       alt={`Screenshot at ${task.timestamp_label}`}
-                      className="w-full h-auto rounded-lg"
+                      className="w-full h-auto"
+                      onError={() => {
+                        // If image_url fails and we have base64, switch to it
+                        if (task.image_base64) {
+                          setImageErrors(prev => ({ ...prev, [index]: true }))
+                        }
+                      }}
                     />
-                    <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/70 to-transparent p-4 rounded-b-lg">
-                      <span className="text-white text-2xl font-bold drop-shadow-lg">
-                        {task.timestamp_label}
-                      </span>
-                    </div>
                   </div>
                 )}
 

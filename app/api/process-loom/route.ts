@@ -106,16 +106,31 @@ export async function POST(request: NextRequest) {
             timestampLabel: task.timestamp_label,
           })
 
+          console.log(`Frame saved to: ${framePath}`)
+
           // Convert to public URL path
           const relativeFramePath = path.relative(
             path.join(process.cwd(), 'public'),
             framePath
           )
           const imageUrl = '/' + relativeFramePath.replace(/\\/g, '/')
+          
+          console.log(`Image accessible at: ${imageUrl}`)
+
+          // For Railway/production: Also include base64 as fallback
+          let base64Image = ''
+          try {
+            const imageBuffer = fs.readFileSync(framePath)
+            base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
+            console.log(`Base64 image created (${imageBuffer.length} bytes)`)
+          } catch (base64Error) {
+            console.error('Failed to create base64 image:', base64Error)
+          }
 
           return {
             ...task,
             image_url: imageUrl,
+            image_base64: base64Image, // Fallback for Railway
             loom_url: generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds),
           }
         } catch (error) {

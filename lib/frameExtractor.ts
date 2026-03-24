@@ -74,10 +74,12 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     const timestampText = options.timestampLabel || secondsToTimestamp(timestampSeconds)
     
     // Build ffmpeg command with drawtext filter to burn timestamp onto frame
-    // Escape special characters in the timestamp text
-    const escapedTimestamp = timestampText.replace(/:/g, '\\:').replace(/'/g, "'\\\\\\''")
+    // Use simple escaping - replace : with hyphen for compatibility across systems
+    const safeTimestamp = timestampText.replace(/:/g, '-')
     
-    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -vf "drawtext=text='⏱ ${escapedTimestamp}':fontcolor=white:fontsize=32:box=1:boxcolor=black@0.7:boxborderw=8:x=20:y=20" -q:v 2 "${framePath}"`
+    // Use fontfile parameter for better compatibility, fallback to system font
+    // box=1 creates background, boxcolor with @0.7 for 70% opacity
+    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -vf "drawtext=text='${safeTimestamp}':fontcolor=white:fontsize=40:box=1:boxcolor=black@0.8:boxborderw=10:x=30:y=30" -q:v 2 "${framePath}"`
     
     console.log(`Extracting frame at ${timestampSeconds}s with timestamp overlay from ${videoPath}`)
     const { stdout, stderr } = await execAsync(command, {
@@ -93,6 +95,15 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     }
 
     console.log(`Frame extracted successfully: ${framePath}`)
+    
+    // Verify file exists and has content
+    const stats = fs.statSync(framePath)
+    console.log(`Frame file size: ${stats.size} bytes`)
+    
+    if (stats.size === 0) {
+      throw new Error('Frame file was created but is empty - ffmpeg may have failed')
+    }
+    
     return framePath
   } catch (error: any) {
     console.error('Error extracting frame:', error)
