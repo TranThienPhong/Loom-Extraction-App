@@ -8,6 +8,7 @@ const execAsync = promisify(exec)
 export interface FrameExtractionOptions {
   videoPath: string
   timestampSeconds: number
+  timestampLabel?: string
   outputDir?: string
 }
 
@@ -64,14 +65,21 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   }
 
   try {
-    // Extract frame using ffmpeg
+    // Extract frame using ffmpeg with timestamp burned into the image
     // -ss: seek to timestamp
     // -i: input file
     // -vframes 1: extract one frame
+    // -vf: video filter to add timestamp overlay
     // -q:v 2: high quality (1-31, lower is better)
-    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
+    const timestampText = options.timestampLabel || secondsToTimestamp(timestampSeconds)
     
-    console.log(`Extracting frame at ${timestampSeconds}s from ${videoPath}`)
+    // Build ffmpeg command with drawtext filter to burn timestamp onto frame
+    // Escape special characters in the timestamp text
+    const escapedTimestamp = timestampText.replace(/:/g, '\\:').replace(/'/g, "'\\\\\\''")
+    
+    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -vf "drawtext=text='⏱ ${escapedTimestamp}':fontcolor=white:fontsize=32:box=1:boxcolor=black@0.7:boxborderw=8:x=20:y=20" -q:v 2 "${framePath}"`
+    
+    console.log(`Extracting frame at ${timestampSeconds}s with timestamp overlay from ${videoPath}`)
     const { stdout, stderr } = await execAsync(command, {
       maxBuffer: 1024 * 1024 * 5, // 5MB buffer
     })

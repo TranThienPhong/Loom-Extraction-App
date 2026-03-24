@@ -9,33 +9,57 @@ export interface TranscriptEntry {
 
 /**
  * Parses a manually pasted transcript with timestamps
- * Expected formats:
+ * Handles multiple formats:
  * - "0:05 - First issue I noticed..."
  * - "1:23 First issue I noticed..."
- * - "0:05 First issue I noticed..."
+ * - "0:05: First issue I noticed..."
+ * - "[0:05] First issue I noticed..."
+ * - Plain text without timestamps (assigns sequential timestamps every 10 seconds)
  */
 export function parseManualTranscript(transcript: string): TranscriptEntry[] {
   const lines = transcript.split('\n').filter(line => line.trim())
   const entries: TranscriptEntry[] = []
+  let autoTimestamp = 0
 
   for (const line of lines) {
-    // Try to match timestamp patterns
-    const match = line.match(/^(\d+:\d+)\s*[-:\s]*(.+)$/)
+    // Try multiple timestamp patterns
+    const patterns = [
+      /^(\d+:\d+)\s*[-:\s]+(.+)$/,           // 0:05 - text or 0:05: text
+      /^\[(\d+:\d+)\]\s*(.+)$/,              // [0:05] text
+      /^(\d+:\d+)\s+(.+)$/,                  // 0:05 text
+      /^At\s+(\d+:\d+)\s*[-:\s]*(.+)$/i,    // At 0:05 - text
+    ]
     
-    if (match) {
-      const timestamp = match[1]
-      const text = match[2].trim()
-      
-      try {
-        const seconds = timestampToSeconds(timestamp)
-        entries.push({
-          timestamp_seconds: seconds,
-          timestamp_label: secondsToTimestamp(seconds),
-          text,
-        })
-      } catch (error) {
-        console.warn(`Skipping line with invalid timestamp: ${line}`)
+    let matched = false
+    for (const pattern of patterns) {
+      const match = line.match(pattern)
+      if (match) {
+        const timestamp = match[1]
+        const text = match[2].trim()
+        
+        try {
+          const seconds = timestampToSeconds(timestamp)
+          entries.push({
+            timestamp_seconds: seconds,
+            timestamp_label: secondsToTimestamp(seconds),
+            text,
+          })
+          matched = true
+          break
+        } catch (error) {
+          console.warn(`Invalid timestamp format: ${timestamp}`)
+        }
       }
+    }
+    
+    // If no timestamp found, treat as plain text and assign auto-timestamp
+    if (!matched && line.trim()) {
+      entries.push({
+        timestamp_seconds: autoTimestamp,
+        timestamp_label: secondsToTimestamp(autoTimestamp),
+        text: line.trim(),
+      })
+      autoTimestamp += 10 // Increment by 10 seconds for next line
     }
   }
 

@@ -42,8 +42,8 @@ export default function Results() {
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i]
       
-      // Check if we need a new page
-      if (yPosition > 250) {
+      // Check if we need a new page before adding content
+      if (yPosition > 220) {
         doc.addPage()
         yPosition = 20
       }
@@ -71,15 +71,44 @@ export default function Results() {
       // Add image if available
       if (task.image_url) {
         try {
-          // Add clickable link on the image
-          doc.setTextColor(0, 0, 255)
-          doc.textWithLink('🔗 Click to view in Loom', 20, yPosition, { url: task.loom_url })
-          yPosition += 10
+          // Check if we need a new page for the image
+          if (yPosition > 180) {
+            doc.addPage()
+            yPosition = 20
+          }
 
-          // Add image (you'd need to convert it to base64 or use a public URL)
-          // For now, we'll just add the link
+          // Fetch and embed the actual image
+          const response = await fetch(task.image_url)
+          const blob = await response.blob()
+          const base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result as string)
+            reader.readAsDataURL(blob)
+          })
+
+          // Add image to PDF (scaled to fit width of 170)
+          const imgWidth = 170
+          const imgHeight = 95 // 16:9 aspect ratio
+          
+          // Add the image with a clickable link overlay
+          doc.addImage(base64, 'JPEG', 20, yPosition, imgWidth, imgHeight)
+          
+          // Add clickable transparent rectangle over the image
+          doc.link(20, yPosition, imgWidth, imgHeight, { url: task.loom_url })
+          
+          yPosition += imgHeight + 3
+          
+          // Add clickable text link below image
+          doc.setFontSize(9)
+          doc.setTextColor(0, 0, 255)
+          doc.textWithLink('🔗 Click image or this link to view in Loom', 20, yPosition, { url: task.loom_url })
+          yPosition += 8
         } catch (error) {
-          console.error('Error adding image:', error)
+          console.error('Error adding image to PDF:', error)
+          // Fallback to text link if image fails
+          doc.setTextColor(0, 0, 255)
+          doc.textWithLink('🔗 View in Loom', 20, yPosition, { url: task.loom_url })
+          yPosition += 10
         }
       } else {
         doc.setTextColor(0, 0, 255)
@@ -114,13 +143,13 @@ export default function Results() {
           <div className="space-x-4">
             <button
               onClick={handleExportPDF}
-              className="bg-green-600 text-white px-6 py-3 rounded-lg font-semibold hover:bg-green-700 transition-colors"
+              className="bg-green-600 text-white px-6 py-3 font-semibold hover:bg-green-700 transition-colors border-2 border-green-700"
             >
               📄 Export PDF
             </button>
             <button
               onClick={() => router.push('/')}
-              className="bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-semibold hover:bg-gray-300 transition-colors"
+              className="bg-gray-200 text-gray-700 px-6 py-3 font-semibold hover:bg-gray-300 transition-colors border-2 border-gray-300"
             >
               ← New Video
             </button>
@@ -131,17 +160,18 @@ export default function Results() {
           {tasks.map((task, index) => (
             <div
               key={index}
-              className="bg-white rounded-lg shadow-md overflow-hidden hover:shadow-lg transition-shadow"
+              className="bg-white shadow-md overflow-hidden hover:shadow-xl transition-shadow border-2 border-gray-200"
             >
               <div className="p-6">
                 <div className="flex items-start justify-between mb-4">
                   <div className="flex-1">
                     <h2 className="text-xl font-bold text-gray-900 mb-2">
-                      {index + 1}. {task.task_name}
-                    </h2>
-                    <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-medium px-3 py-1 rounded-full">
-                      ⏱ {task.timestamp_label}
+                      {index + 1}. {task.task_name}<span> </span>   
+                      <span className="inline-block bg-indigo-100 text-indigo-800 text-lg font-medium px-3 py-1 rounded-full">
+                      ⏱{task.timestamp_label}
                     </span>
+                    </h2>
+                    
                   </div>
                 </div>
 
@@ -168,9 +198,9 @@ export default function Results() {
                   href={task.loom_url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-block bg-indigo-600 text-white px-6 py-2 rounded-lg font-semibold hover:bg-indigo-700 transition-colors"
+                  className="inline-block bg-indigo-600 text-white px-6 py-3 font-semibold hover:bg-indigo-700 transition-colors justify-items-end border-2 border-indigo-700"
                 >
-                  🎥 Watch in Loom
+                  Watch in Loom
                 </a>
               </div>
             </div>

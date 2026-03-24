@@ -5,10 +5,13 @@ A web application that automatically extracts actionable tasks from Loom video f
 ## Features
 
 - 🎥 **Video Processing**: Downloads Loom videos for frame extraction
-- 📝 **Transcript Analysis**: Uses Claude AI to identify tasks and change requests
+- 📝 **Automatic Transcript Extraction**: Pulls transcript with timestamps from Loom videos
+- 🔄 **Manual Transcript Fallback**: Smart fallback when Loom API is blocked (supports 5+ formats)
+- 🤖 **AI Analysis**: Multi-provider AI (Anthropic, OpenAI, OpenRouter, Ollama) identifies tasks and change requests
 - 📸 **Screenshot Capture**: Automatically captures frames at task timestamps
-- ⏱️ **Timestamp Links**: Clickable links to exact moments in the Loom video
-- 📄 **PDF Export**: Export all tasks as a PDF with hotlinked screenshots
+- ⏱️ **Timestamp Overlay**: Burns timestamps directly onto screenshot images
+- 🔗 **Clickable Links**: Direct links to exact moments in the Loom video
+- 📄 **Rich PDF Export**: Export tasks as PDF with embedded screenshots (clickable to Loom)
 - 🎨 **Clean UI**: Modern, responsive interface built with Tailwind CSS
 
 ## Prerequisites

@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
           const framePath = await extractFrame({
             videoPath: videoPath!,
             timestampSeconds: task.timestamp_seconds,
+            timestampLabel: task.timestamp_label,
           })
 
           // Convert to public URL path

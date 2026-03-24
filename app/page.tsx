@@ -1,15 +1,22 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 
 export default function Home() {
   const [loomUrl, setLoomUrl] = useState('')
   const [transcript, setTranscript] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<{message: string, needsManualTranscript?: boolean} | null>(null)
   const [useManualTranscript, setUseManualTranscript] = useState(false)
   const router = useRouter()
+
+  // Auto-show manual transcript option when API fails
+  useEffect(() => {
+    if (error?.needsManualTranscript) {
+      setUseManualTranscript(true)
+    }
+  }, [error])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,11 +42,14 @@ export default function Home() {
         sessionStorage.setItem('loomResults', JSON.stringify(data))
         router.push('/results')
       } else {
-        setError(data.error || 'An error occurred while processing the video')
+        setError({
+          message: data.error || 'An error occurred while processing the video',
+          needsManualTranscript: data.needsManualTranscript
+        })
         setLoading(false)
       }
     } catch (error) {
-      setError('An error occurred while processing the video')
+      setError({message: 'An error occurred while processing the video'})
       console.error(error)
       setLoading(false)
     }
@@ -49,15 +59,10 @@ export default function Home() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <div className="inline-block animate-spin rounded-full h-16 w-16 border-b-2 border-gray-900 mb-4"></div>
+          <div className="inline-block animate-spin h-16 w-16 border-b-4 border-indigo-600 mb-4" style={{borderRadius: 0}}></div>
           <h2 className="text-2xl font-semibold text-gray-900">Processing your Loom video...</h2>
           <p className="text-gray-600 mt-2">This may take a few minutes</p>
-          <div className="mt-6 text-sm text-gray-500">
-            <p>⏳ Downloading video...</p>
-            <p>📝 Extracting transcript...</p>
-            <p>🤖 Analyzing with AI...</p>
-            <p>📸 Capturing screenshots...</p>
-          </div>
+
         </div>
       </div>
     )
@@ -76,7 +81,7 @@ export default function Home() {
         </div>
 
         {error && (
-          <div className="bg-red-50 border-l-4 border-red-500 p-6 mb-6 rounded-lg">
+          <div className="bg-red-50 border-l-4 border-red-500 p-6 mb-6">
             <div className="flex">
               <div className="flex-shrink-0">
                 <svg className="h-6 w-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -84,22 +89,30 @@ export default function Home() {
                 </svg>
               </div>
               <div className="ml-3 flex-1">
-                <h3 className="text-sm font-medium text-red-800">Error Processing Video</h3>
+                <h3 className="text-sm font-medium text-red-800">
+                  {error.needsManualTranscript ? '⚠️ Auto-Extraction Failed' : 'Error Processing Video'}
+                </h3>
                 <div className="mt-2 text-sm text-red-700 whitespace-pre-wrap">
-                  {error}
+                  {error.message}
                 </div>
-                {error.includes('yt-dlp') && (
+                {error.needsManualTranscript && (
+                  <div className="mt-4 p-3 bg-yellow-50 border-2 border-yellow-300 text-sm">
+                    <p className="font-semibold text-yellow-900">💡 Solution: Use Manual Transcript</p>
+                    <p className="text-yellow-800 mt-1">The automatic transcript extraction failed (Loom API may be blocked or unavailable). Please enable the "Use manual transcript" option below and paste your transcript manually.</p>
+                  </div>
+                )}
+                {error.message.includes('yt-dlp') && (
                   <div className="mt-4 text-sm text-red-700">
                     <p className="font-semibold">To install yt-dlp:</p>
-                    <code className="block mt-2 bg-red-100 p-2 rounded text-xs">
+                    <code className="block mt-2 bg-red-100 p-2 text-xs">
                       sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && sudo chmod a+rx /usr/local/bin/yt-dlp
                     </code>
                   </div>
                 )}
-                {error.includes('ffmpeg') && (
+                {error.message.includes('ffmpeg') && (
                   <div className="mt-4 text-sm text-red-700">
                     <p className="font-semibold">To install ffmpeg:</p>
-                    <code className="block mt-2 bg-red-100 p-2 rounded text-xs">
+                    <code className="block mt-2 bg-red-100 p-2 text-xs">
                       sudo apt-get update && sudo apt-get install ffmpeg
                     </code>
                   </div>
@@ -118,7 +131,7 @@ export default function Home() {
           </div>
         )}
 
-        <div className="bg-white rounded-lg shadow-xl p-8">
+        <div className="bg-white shadow-xl p-8 border border-gray-200">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="loomUrl" className="block text-sm font-medium text-gray-700 mb-2">
@@ -131,31 +144,42 @@ export default function Home() {
                 onChange={(e) => setLoomUrl(e.target.value)}
                 placeholder="https://www.loom.com/share/..."
                 required
-                className="w-full px-4 py-3 text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                className="w-full px-4 py-3 text-gray-900 border-2 border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               />
               <p className="mt-2 text-sm text-gray-500">
                 Paste a public Loom video link
               </p>
             </div>
 
-            <div className="border-t border-gray-200 pt-6">
+            <div className="border-t-2 border-gray-200 pt-6">
+              <div className="bg-blue-50 border-blue-500 p-4 mb-4">
+                <h3 className="text-sm font-semibold text-blue-900 mb-2">🔄 What is Manual Transcript?</h3>
+                <p className="text-sm text-blue-800 mb-2">
+                  By default, the app automatically extracts the transcript from your Loom video. However, if automatic extraction fails (due to API limitations or blocked access), you can manually paste the transcript here.
+                </p>
+                <p className="text-sm text-blue-800">
+                  <strong>When to use:</strong> Only enable this if automatic extraction fails or if you want to provide a custom transcript.
+                </p>
+              </div>
+              
               <div className="flex items-center mb-4">
                 <input
                   type="checkbox"
                   id="manualTranscript"
                   checked={useManualTranscript}
                   onChange={(e) => setUseManualTranscript(e.target.checked)}
-                  className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                  className="h-5 w-5 text-indigo-600 focus:ring-indigo-500 border-gray-300"
+                  style={{borderRadius: 0}}
                 />
-                <label htmlFor="manualTranscript" className="ml-2 block text-sm font-medium text-gray-700">
-                  Paste transcript manually (optional)
+                <label htmlFor="manualTranscript" className="ml-3 block text-sm font-medium text-gray-700">
+                  Use manual transcript {error?.needsManualTranscript && <span className="text-red-600 font-bold">(⚠️ Required - Auto-extraction failed)</span>}
                 </label>
               </div>
 
               {useManualTranscript && (
                 <div>
                   <label htmlFor="transcript" className="block text-sm font-medium text-gray-700 mb-2">
-                    Video Transcript with Timestamps
+                    Video Transcript
                   </label>
                   <textarea
                     id="transcript"
@@ -163,13 +187,24 @@ export default function Home() {
                     onChange={(e) => setTranscript(e.target.value)}
                     placeholder="0:05 - First issue I noticed is the header is misaligned
 0:15 - The button color should be blue not green
-0:23 - Loading spinner is missing on the submit button"
+0:23 - Loading spinner is missing on the submit button
+
+You can also paste plain text without timestamps - we'll assign them automatically!"
                     rows={10}
-                    className="w-full px-4 py-3 text-gray-900 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-mono text-sm"
+                    className="w-full px-4 py-3 text-gray-900 border-2 border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 font-mono text-sm"
                   />
-                  <p className="mt-2 text-sm text-gray-500">
-                    Format: "timestamp - description" on each line (e.g., "0:05 - Fix header alignment")
-                  </p>
+                  <div className="mt-3 p-4 bg-blue-50 border-2 border-blue-200">
+                    <p className="text-sm font-semibold text-blue-900 mb-2">📋 How to Get Your Loom Transcript:</p>
+                    <ol className="text-sm text-blue-800 space-y-1 ml-4 list-decimal">
+                      <li>Open your Loom video in a browser</li>
+                      <li>Click on the <strong>Transcript</strong> → <strong>Copy</strong></li>
+                      <li>Patse the transcript <strong>here</strong></li>
+                      <li>Or use a transcript service like <strong>otter.ai</strong> or <strong>Descript</strong></li>
+                    </ol>
+                    <p className="text-sm text-blue-700 mt-3">
+                      <strong>Flexible formats:</strong> "0:05 - text", "[0:05] text", "At 0:05 text", or plain text without timestamps
+                    </p>
+                  </div>
                 </div>
               )}
             </div>
@@ -177,19 +212,20 @@ export default function Home() {
             <button
               type="submit"
               disabled={!loomUrl}
-              className="w-full bg-indigo-600 text-white py-4 px-6 rounded-lg font-semibold text-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              className="w-full bg-indigo-600 text-white py-4 px-6 font-semibold text-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
               Process Video
             </button>
           </form>
 
-          <div className="mt-8 p-4 bg-blue-50 rounded-lg">
-            <h3 className="font-semibold text-blue-900 mb-2">How it works:</h3>
-            <ol className="list-decimal list-inside space-y-1 text-sm text-blue-800">
-              <li>Paste your Loom video URL</li>
-              <li>AI analyzes the video to find all requested changes</li>
-              <li>Screenshots are captured at each moment</li>
-              <li>Export everything as a PDF with clickable timestamps</li>
+          <div className="mt-8 p-4 bg-gray-100 border-l-4 border-indigo-600">
+            <h3 className="font-semibold text-gray-900 mb-3 text-lg">📖 How it works:</h3>
+            <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+              <li><strong>Paste your Loom video URL</strong> - Just copy and paste the link</li>
+              <li><strong>Automatic transcript extraction</strong> - The app pulls the video transcript automatically</li>
+              <li><strong>AI analysis</strong> - AI identifies every task, change request, or feedback point</li>
+              <li><strong>Screenshot capture</strong> - Screenshots are captured at each timestamp with the time burned into the image</li>
+              <li><strong>Export as PDF</strong> - Get a professional PDF with clickable screenshots linking directly to the video moments</li>
             </ol>
           </div>
         </div>
