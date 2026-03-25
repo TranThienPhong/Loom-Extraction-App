@@ -32,9 +32,11 @@ export default function Results() {
   const [imageErrors, setImageErrors] = useState<{[key: string | number]: boolean}>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
   const [lightboxTimestamp, setLightboxTimestamp] = useState<string>('')
+  const [lightboxIndex, setLightboxIndex] = useState<number>(0)
+  const [currentTaskScreenshots, setCurrentTaskScreenshots] = useState<Screenshot[]>([])
   const router = useRouter()
 
-  // Helper function to convert image URL to base64 for PDF export
+  // Helper function to convert image URL to base64 for PDF export (fallback for local dev)
   const imageUrlToBase64 = async (url: string): Promise<string> => {
     try {
       const response = await fetch(url)
@@ -48,6 +50,27 @@ export default function Results() {
     } catch (error) {
       console.error('Failed to convert image to base64:', error)
       throw error
+    }
+  }
+
+  // Navigation functions for lightbox
+  const showPreviousImage = () => {
+    if (currentTaskScreenshots.length > 0) {
+      const newIndex = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
+      setLightboxIndex(newIndex)
+      const screenshot = currentTaskScreenshots[newIndex]
+      setLightboxImage(screenshot.image_base64 || screenshot.image_url)
+      setLightboxTimestamp(screenshot.timestamp_label)
+    }
+  }
+
+  const showNextImage = () => {
+    if (currentTaskScreenshots.length > 0) {
+      const newIndex = (lightboxIndex + 1) % currentTaskScreenshots.length
+      setLightboxIndex(newIndex)
+      const screenshot = currentTaskScreenshots[newIndex]
+      setLightboxImage(screenshot.image_base64 || screenshot.image_url)
+      setLightboxTimestamp(screenshot.timestamp_label)
     }
   }
 
@@ -105,9 +128,10 @@ export default function Results() {
       // Add images to PDF
       const screenshotsToExport = task.screenshots && task.screenshots.length > 0
         ? task.screenshots
-        : task.image_url 
+        : (task.image_url || task.image_base64)
           ? [{ 
-              image_url: task.image_url, 
+              image_url: task.image_url,
+              image_base64: task.image_base64,
               timestamp_label: task.timestamp_label,
               timestamp_seconds: task.timestamp_seconds
             }]
@@ -116,7 +140,7 @@ export default function Results() {
       if (screenshotsToExport.length > 0) {
         for (let s = 0; s < screenshotsToExport.length; s++) {
           const screenshot = screenshotsToExport[s]
-          const imageSource = screenshot.image_url
+          const imageSource = screenshot.image_base64 || screenshot.image_url
           
           if (!imageSource) continue
 
@@ -127,8 +151,8 @@ export default function Results() {
               yPosition = 20
             }
 
-            // Fetch and convert image to base64 for PDF embedding
-            const base64 = await imageUrlToBase64(imageSource)
+            // Get base64: use existing if available, otherwise fetch and convert
+            const base64 = screenshot.image_base64 || await imageUrlToBase64(imageSource)
 
             // Add image to PDF (scaled to fit width of 170)
             const imgWidth = 170
@@ -246,15 +270,22 @@ export default function Results() {
                       {task.screenshots.map((screenshot, screenshotIndex) => (
                         <div key={screenshotIndex} className="border-2 border-gray-300 hover:border-indigo-500 transition-colors cursor-pointer group relative">
                           <img
-                            src={screenshot.image_url}
+                            src={screenshot.image_base64 || screenshot.image_url}
                             alt={`Screenshot at ${screenshot.timestamp_label}`}
                             className="w-full h-auto"
                             onClick={() => {
-                              setLightboxImage(screenshot.image_url)
+                              setCurrentTaskScreenshots(task.screenshots || [])
+                              setLightboxIndex(screenshotIndex)
+                              setLightboxImage(screenshot.image_base64 || screenshot.image_url)
                               setLightboxTimestamp(screenshot.timestamp_label)
                             }}
-                            onError={() => {
-                              console.error(`Failed to load screenshot: ${screenshot.image_url}`)
+                            onError={(e) => {
+                              // Fallback: if image_url fails and we have base64, use it
+                              if (screenshot.image_base64 && e.currentTarget.src !== screenshot.image_base64) {
+                                e.currentTarget.src = screenshot.image_base64
+                              } else {
+                                console.error(`Failed to load screenshot: ${screenshot.image_url}`)
+                              }
                             }}
                           />
                           <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -264,7 +295,7 @@ export default function Results() {
                       ))}
                     </div>
                   </div>
-                ) : task.image_url && (
+                ) : (task.image_base64 || task.image_url) && (
                   /* Fallback to single image for backward compatibility */
                   <a
                   href={task.loom_url}
@@ -274,11 +305,16 @@ export default function Results() {
                 >
                   <div className="mb-4 border-2 border-gray-300">
                     <img
-                      src={task.image_url}
+                      src={task.image_base64 || task.image_url}
                       alt={`Screenshot at ${task.timestamp_label}`}
                       className="w-full h-auto"
-                      onError={() => {
-                        console.error(`Failed to load image: ${task.image_url}`)
+                      onError={(e) => {
+                        // Fallback: try base64 if URL fails
+                        if (task.image_base64 && e.currentTarget.src !== task.image_base64) {
+                          e.currentTarget.src = task.image_base64
+                        } else {
+                          console.error(`Failed to load image: ${task.image_url}`)
+                        }
                       }}
                     />
                   </div>
@@ -298,19 +334,49 @@ export default function Results() {
           ))}
         </div>
 
-        {/* Lightbox Modal for Full-Size Image Inspection */}
+        {/* Lightbox Modal for Full-Size Image Inspection with Navigation */}
         {lightboxImage && (
           <div 
             className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4"
             onClick={() => setLightboxImage(null)}
           >
             <div className="relative max-w-7xl w-full">
+              {/* Close button */}
               <button
                 onClick={() => setLightboxImage(null)}
-                className="absolute top-4 right-4 text-white text-4xl font-bold hover:text-gray-300 z-10"
+                className="absolute top-3 right-4 text-gray-400 text-4xl font-bold hover:text-gray-300 z-10 rounded-full w-12 h-12 flex items-center justify-center"
               >
                 ×
               </button>
+
+              {/* Previous arrow - only show if multiple screenshots */}
+              {currentTaskScreenshots.length > 1 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    showPreviousImage()
+                  }}
+                  className="absolute left-4 top-1/2 transform -translate-x-[5rem] -translate-y-1/2 text-gray text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
+                  aria-label="Previous image"
+                >
+                  ‹
+                </button>
+              )}
+
+              {/* Next arrow - only show if multiple screenshots */}
+              {currentTaskScreenshots.length > 1 && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    showNextImage()
+                  }}
+                  className="absolute right-4 top-1/2 transform translate-x-[5rem] -translate-y-1/2 text-gray text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
+                  aria-label="Next image"
+                >
+                  ›
+                </button>
+              )}
+
               <div className="bg-white p-2 rounded-lg">
                 <img
                   src={lightboxImage}
@@ -320,11 +386,16 @@ export default function Results() {
                 />
                 <p className="text-center mt-2 text-gray-700 font-semibold">
                   ⏱ {lightboxTimestamp}
+                  {currentTaskScreenshots.length > 1 && (
+                    <span className="ml-3 text-gray-500 text-sm">
+                      ({lightboxIndex + 1} of {currentTaskScreenshots.length})
+                    </span>
+                  )}
                 </p>
               </div>
-              <p className="text-white text-center mt-4 text-sm">
-                Click outside image or X button to close
-              </p>
+              {/* <p className="text-white text-center mt-4 text-sm">
+                {currentTaskScreenshots.length > 1 ? 'Use arrow buttons or click outside to close' : 'Click outside image or X button to close'}
+              </p> */}
             </div>
           </div>
         )}

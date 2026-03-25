@@ -38,20 +38,28 @@ export default function Home() {
       const data = await response.json()
       
       if (response.ok) {
-        // Remove base64 images to avoid sessionStorage quota exceeded error
-        // Base64 images are HUGE and will be fetched on-demand for PDF export
-        const dataWithoutBase64 = {
-          ...data,
-          tasks: data.tasks.map((task: any) => ({
-            ...task,
-            image_base64: undefined, // Remove base64 from main image
-            screenshots: task.screenshots?.map((screenshot: any) => ({
-              ...screenshot,
-              image_base64: undefined // Remove base64 from screenshot gallery
+        // Strategy: Try to store with base64 (needed for Railway), fall back to without base64 if quota error
+        try {
+          // First, store full data with base64 in sessionStorage (for Railway ephemeral filesystem)
+          sessionStorage.setItem('loomResults', JSON.stringify(data))
+          console.log('Stored results with base64 images')
+        } catch (quotaError) {
+          console.warn('sessionStorage quota exceeded, storing without base64:', quotaError)
+          // If quota error, remove base64 and retry
+          const dataWithoutBase64 = {
+            ...data,
+            tasks: data.tasks.map((task: any) => ({
+              ...task,
+              image_base64: undefined,
+              screenshots: task.screenshots?.map((screenshot: any) => ({
+                ...screenshot,
+                image_base64: undefined
+              }))
             }))
-          }))
+          }
+          sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
+          console.log('Stored results without base64 (quota fallback)')
         }
-        sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
         router.push('/results')
       } else {
         setError({

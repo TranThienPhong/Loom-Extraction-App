@@ -1,100 +1,114 @@
 # Railway Deployment - Troubleshooting Guide
 
-## Issue: Images Not Showing with Timestamps
+## Issue: Images Not Showing with Timestamps (SOLVED ✅)
 
 ### Problem
 After deploying to Railway, the processed video results don't show screenshot images with timestamps burned into them.
 
-### Possible Causes
+### Root Cause
+Railway has **ephemeral filesystem** - files saved to `/public/frames/` don't persist across requests. Images are generated but can't be accessed later.
 
-1. **Ephemeral Filesystem**
-   - Railway containers may have ephemeral storage
-   - Files created at runtime (in `public/temp/`) may not persist or be accessible
+### Solution Implemented
 
-2. **ffmpeg Font Issues**
-   - Alpine Linux (used in Docker/Railway) may not have required fonts
-   - The `drawtext` filter may fail silently without fonts
+#### Smart Storage Strategy
+The app now tries to store base64 images in sessionStorage (for Railway), with automatic fallback:
 
-3. **Static File Serving**
-   - Runtime-generated files in `public/` may not be served correctly in production
-
-### Solutions Implemented
-
-#### 1. Base64 Encoding (Primary Solution)
-The API now includes images as base64-encoded data URLs in the response:
-
+**In [app/page.tsx](app/page.tsx#L41-L66):**
 ```typescript
-// In app/api/process-loom/route.ts
-image_base64: `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
+try {
+  // Try to store WITH base64 (needed for Railway)
+  sessionStorage.setItem('loomResults', JSON.stringify(data))
+  console.log('Stored results with base64 images')
+} catch (quotaError) {
+  // If quota exceeded, strip base64 (works locally with file URLs)
+  const dataWithoutBase64 = ...
+  sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
+}
 ```
 
-**Advantages:**
-- ✅ No filesystem dependencies
-- ✅ Works on any platform
-- ✅ Images embedded directly in API response
-- ✅ No static file serving issues
+**Benefits:**
+- ✅ **Railway deployment**: base64 in sessionStorage → images display
+- ✅ **Local development**: If quota error, uses file URLs (smaller storage)
+- ✅ **Automatic fallback**: Works for both small and large videos
 
-**Disadvantages:**
-- ⚠️ Larger API response size
-- ⚠️ More memory usage
+#### Multiple Screenshots with Navigation
+Added image gallery with arrow navigation:
 
-#### 2. Improved ffmpeg Command
-Simplified timestamp burning with better compatibility:
+**In [app/results/page.tsx](app/results/page.tsx):**
+- Click any screenshot → opens lightbox
+- Previous/Next arrows appear (if multiple screenshots)
+- Shows "X of Y" counter
+- Keyboard-friendly navigation
 
-```bash
-# Old (complex escaping):
-drawtext=text='⏱ 0\\:23':fontcolor=white...
-
-# New (simple, no special chars):
-drawtext=text='0-23':fontcolor=white:fontsize=40...
-```
-
-Changes:
-- Removed emoji (may not render on all systems)
-- Simplified timestamp format (`:` → `-`)
-- Increased font size for visibility (32 → 40)
-- Increased box opacity (0.7 → 0.8)
-
-#### 3. Image Fallback System
-The results page uses base64 as fallback:
-
-```typescript
-// Try regular URL first, fallback to base64 on error
-<img
-  src={imageErrors[index] && task.image_base64 ? task.image_base64 : task.image_url}
-  onError={() => setImageErrors({ ...prev, [index]: true })}
-/>
-```
+**Features:**
+- 📸 Gallery grid (up to 3 screenshots per task)
+- ⬅️ ➡️ Arrow buttons for navigation
+- 🔢 Image counter (1 of 3)
+- ⌨️ Click outside to close
 
 ### Verification Steps
 
-After deploying to Railway:
+#### 1. Check Railway Logs
+```
+Look for:
+✅ "Stored results with base64 images" (sessionStorage working)
+✅ "Base64 image created (228000 bytes)" (images encoded)
+✅ "Successfully captured 3/3 screenshots" (multi-frame extraction)
 
-1. **Check Railway Logs**
+Red flags:
+❌ "sessionStorage quota exceeded" (video too long - base64 too large)
+❌ ffmpeg errors about fonts or drawtext
+```
+
+#### 2. Test in Browser Console
+```javascript
+// Check if base64 images are present
+const results = JSON.parse(sessionStorage.getItem('loomResults'))
+console.log('Tasks with base64:', results.tasks.filter(t => t.image_base64).length)
+console.log('Tasks with screenshot arrays:', results.tasks.filter(t => t.screenshots?.length > 1).length)
+```
+
+#### 3. Verify Image Display
+- Open browser DevTools → Network tab
+- Base64 working: img src shows `data:image/jpeg;base64...`
+- File URLs: img src shows `/frames/frame-0-23.jpg`
+
+### Railway-Specific Settings
+
+**Ensure these settings in Railway dashboard:**
+
+1. **Environment Variables**
    ```
-   Look for:
-   ✅ "Frame extracted successfully: /path/to/frame.jpg"
-   ✅ "Frame file size: 228000 bytes"
-   ✅ "Base64 image created (228000 bytes)"
-   
-   Red flags:
-   ❌ "Frame file was created but is empty"
-   ❌ "Failed to create base64 image"
-   ❌ ffmpeg errors about fonts or drawtext
+   NODE_ENV=production
+   OPENROUTER_API_KEY=sk-or-v1-...
+   (Add your preferred AI provider API key)
    ```
 
-2. **Test in Browser Console**
-   ```javascript
-   // Check if base64 images are present
-   const tasks = JSON.parse(sessionStorage.getItem('loomResults')).tasks
-   console.log('Images with base64:', tasks.filter(t => t.image_base64).length)
-   console.log('Total tasks:', tasks.length)
-   ```
+2. **Build Settings**
+   - Build Command: `npm run build`
+   - Start Command: `npm start`
+   - nixpacks.toml should be detected automatically
 
-3. **Verify Image Display**
-   - Open browser DevTools → Network tab
-   - Check if images return 404 (file not found)
-   - If base64 is working, you'll see `data:image/jpeg;base64...` in img src
+3. **Domain Settings**
+   - Generate domain in Railway dashboard
+   - Or connect custom domain
+
+### How Multiple Screenshots Work
+
+The AI now identifies 1-3 key moments per task:
+
+1. **Before state** - Setup or initial condition
+2. **Action moment** - Click, hover, interaction
+3. **After state** - Result, popup, error
+
+**Example:**
+```
+Task: "Button shows error when clicked"
+Screenshots:
+  - 1:19 (before click - button visible)
+  - 1:21 (during click - button pressed)
+  - 1:23 (after click - error popup shown)
+```
 
 ### Railway-Specific Configuration
 
