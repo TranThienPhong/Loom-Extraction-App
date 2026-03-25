@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { getProcessingResults } from '@/lib/imageStorage'
 
 // Utility function to generate Loom URL with timestamp (moved inline to avoid server-side imports)
 function generateLoomUrlWithTimestamp(videoId: string, timestampSeconds: number): string {
@@ -74,16 +75,57 @@ export default function Results() {
     }
   }
 
+  // Keyboard navigation for lightbox
   useEffect(() => {
-    const resultsData = sessionStorage.getItem('loomResults')
-    if (!resultsData) {
-      router.push('/')
-      return
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (lightboxImage) {
+        if (e.key === 'ArrowLeft' || e.key === 'Left') {
+          showPreviousImage()
+        } else if (e.key === 'ArrowRight' || e.key === 'Right') {
+          showNextImage()
+        } else if (e.key === 'Escape') {
+          setLightboxImage(null)
+        }
+      }
     }
 
-    const data = JSON.parse(resultsData)
-    setTasks(data.tasks || [])
-    setVideoId(data.videoId || '')
+    window.addEventListener('keydown', handleKeyPress)
+    return () => window.removeEventListener('keydown', handleKeyPress)
+  }, [lightboxImage, lightboxIndex, currentTaskScreenshots])
+
+  useEffect(() => {
+    const loadResults = async () => {
+      console.log('[Results] Loading processing results...')
+      
+      // Try IndexedDB first (Railway-compatible)
+      const indexedDBData = await getProcessingResults()
+      if (indexedDBData) {
+        console.log('[Results] ✅ Loaded from IndexedDB:', indexedDBData.tasks.length, 'tasks')
+        setTasks(indexedDBData.tasks || [])
+        setVideoId(indexedDBData.videoId || '')
+        return
+      }
+
+      // Fallback to sessionStorage (local dev)
+      const resultsData = sessionStorage.getItem('loomResults')
+      if (!resultsData) {
+        console.log('[Results] ❌ No data found, redirecting to home')
+        router.push('/')
+        return
+      }
+
+      try {
+        const data = JSON.parse(resultsData)
+        console.log('[Results] ⚠️ Loaded from sessionStorage (fallback):', data.tasks?.length, 'tasks')
+        setTasks(data.tasks || [])
+        setVideoId(data.videoId || '')
+      } catch (error) {
+        console.error('[Results] ❌ Failed to parse sessionStorage data:', error)
+        router.push('/')
+      }
+    }
+
+    loadResults()
   }, [router])
 
   const handleExportPDF = async () => {

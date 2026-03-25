@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { storeProcessingResults } from '@/lib/imageStorage'
 
 export default function Home() {
   const [loomUrl, setLoomUrl] = useState('')
@@ -38,28 +39,34 @@ export default function Home() {
       const data = await response.json()
       
       if (response.ok) {
-        // Strategy: Try to store with base64 (needed for Railway), fall back to without base64 if quota error
+        // Use IndexedDB for Railway compatibility (50MB+ quota vs sessionStorage 5-10MB)
+        console.log('[App] Storing results with IndexedDB...')
         try {
-          // First, store full data with base64 in sessionStorage (for Railway ephemeral filesystem)
-          sessionStorage.setItem('loomResults', JSON.stringify(data))
-          console.log('Stored results with base64 images')
-        } catch (quotaError) {
-          console.warn('sessionStorage quota exceeded, storing without base64:', quotaError)
-          // If quota error, remove base64 and retry
-          const dataWithoutBase64 = {
-            ...data,
-            tasks: data.tasks.map((task: any) => ({
-              ...task,
-              image_base64: undefined,
-              screenshots: task.screenshots?.map((screenshot: any) => ({
-                ...screenshot,
-                image_base64: undefined
+          await storeProcessingResults(data)
+          console.log('[App] ✅ Successfully stored in IndexedDB')
+        } catch (indexedDBError) {
+          console.error('[App] ❌ IndexedDB failed:', indexedDBError)
+          
+          // Ultimate fallback: try sessionStorage without base64
+          try {
+            const dataWithoutBase64 = {
+              ...data,
+              tasks: data.tasks.map((task: any) => ({
+                ...task,
+                image_base64: undefined,
+                screenshots: task.screenshots?.map((screenshot: any) => ({
+                  ...screenshot,
+                  image_base64: undefined
+                }))
               }))
-            }))
+            }
+            sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
+            console.log('[App] ⚠️ Stored without images in sessionStorage (fallback)')
+          } catch (sessionStorageError) {
+            console.error('[App] ❌ All storage methods failed')
           }
-          sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
-          console.log('Stored results without base64 (quota fallback)')
         }
+        
         router.push('/results')
       } else {
         setError({
