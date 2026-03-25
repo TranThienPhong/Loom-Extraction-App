@@ -5,6 +5,7 @@ export interface AIAnalysisResult {
   timestamp_label: string
   task_name: string
   task_description: string
+  screenshot_timestamps?: number[] // Multiple screenshot moments (before/during/after actions)
 }
 
 export interface TranscriptEntry {
@@ -195,16 +196,23 @@ ${transcriptText}
 
 Instructions:
 1. Identify each distinct task, fix, or change request
-2. For each one, determine the timestamp when it was mentioned
-3. Create a clear, actionable task name (5-10 words)
-4. Write a detailed task description including all relevant context, URLs, screen names, UI elements, or specific details mentioned
+2. For each one, determine the PRIMARY timestamp when it was first mentioned
+3. **CRITICAL**: Identify 1-3 key screenshot moments that capture the visual context:
+   - Before state (if an action is about to happen)
+   - During action (mouse click, hover, interaction moment)
+   - After state (result of action, popup, error shown)
+   - For simple issues, 1 screenshot at the mention time is enough
+   - For complex interactions, capture 2-3 moments (before/during/after)
+4. Create a clear, actionable task name (5-10 words)
+5. Write a detailed task description including all relevant context
 
 Return ONLY a JSON array with no additional text, explanation, or markdown formatting. Each object must have exactly these fields:
 {
   "timestamp_seconds": <number>,
   "timestamp_label": "<M:SS format>",
   "task_name": "<short descriptive title>",
-  "task_description": "<detailed description with all context>"
+  "task_description": "<detailed description with all context>",
+  "screenshot_timestamps": [<array of 1-3 timestamp numbers in seconds for key visual moments>]
 }
 
 Example output format:
@@ -213,7 +221,15 @@ Example output format:
     "timestamp_seconds": 44,
     "timestamp_label": "0:44",
     "task_name": "Fix header alignment on mobile",
-    "task_description": "The header navigation is not centered properly on mobile devices. It appears shifted to the left by about 10 pixels. This is visible on the home page when viewing on iPhone."
+    "task_description": "The header navigation is not centered properly on mobile devices. It appears shifted to the left by about 10 pixels. This is visible on the home page when viewing on iPhone.",
+    "screenshot_timestamps": [44, 46]
+  },
+  {
+    "timestamp_seconds": 120,
+    "timestamp_label": "2:00",
+    "task_name": "Button click shows error popup",
+    "task_description": "When clicking the submit button, an error popup appears saying 'Invalid data'. Need to add proper validation before submission.",
+    "screenshot_timestamps": [119, 121, 123]
   }
 ]
 

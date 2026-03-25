@@ -38,8 +38,20 @@ export default function Home() {
       const data = await response.json()
       
       if (response.ok) {
-        // Store results in sessionStorage for the results page
-        sessionStorage.setItem('loomResults', JSON.stringify(data))
+        // Remove base64 images to avoid sessionStorage quota exceeded error
+        // Base64 images are HUGE and will be fetched on-demand for PDF export
+        const dataWithoutBase64 = {
+          ...data,
+          tasks: data.tasks.map((task: any) => ({
+            ...task,
+            image_base64: undefined, // Remove base64 from main image
+            screenshots: task.screenshots?.map((screenshot: any) => ({
+              ...screenshot,
+              image_base64: undefined // Remove base64 from screenshot gallery
+            }))
+          }))
+        }
+        sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
         router.push('/results')
       } else {
         setError({

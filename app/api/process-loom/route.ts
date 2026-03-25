@@ -98,44 +98,75 @@ export async function POST(request: NextRequest) {
     const tasksWithImages = await Promise.all(
       tasks.map(async (task, index) => {
         try {
-          console.log(`Extracting frame ${index + 1}/${tasks.length} at ${task.timestamp_label}`)
+          console.log(`Processing task ${index + 1}/${tasks.length}: ${task.task_name}`)
           
-          const framePath = await extractFrame({
-            videoPath: videoPath!,
-            timestampSeconds: task.timestamp_seconds,
-            timestampLabel: task.timestamp_label,
-          })
+          // Extract multiple frames if screenshot_timestamps is provided
+          const timestampsToCapture = task.screenshot_timestamps && task.screenshot_timestamps.length > 0
+            ? task.screenshot_timestamps
+            : [task.timestamp_seconds] // Fallback to primary timestamp
+          
+          console.log(`Capturing ${timestampsToCapture.length} screenshot(s) for task ${index + 1}`)
+          
+          const screenshots = await Promise.all(
+            timestampsToCapture.map(async (timestampSeconds, screenshotIndex) => {
+              try {
+                const timestampLabel = secondsToTimestamp(timestampSeconds)
+                console.log(`  - Extracting frame at ${timestampLabel} (${screenshotIndex + 1}/${timestampsToCapture.length})`)
+                
+                const framePath = await extractFrame({
+                  videoPath: videoPath!,
+                  timestampSeconds,
+                  timestampLabel,
+                })
 
-          console.log(`Frame saved to: ${framePath}`)
+                // Convert to public URL path
+                const relativeFramePath = path.relative(
+                  path.join(process.cwd(), 'public'),
+                  framePath
+                )
+                const imageUrl = '/' + relativeFramePath.replace(/\\/g, '/')
+                
+                // For Railway/production: Create base64 fallback
+                let base64Image = ''
+                try {
+                  const imageBuffer = fs.readFileSync(framePath)
+                  base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
+                  console.log(`  - Base64 created (${imageBuffer.length} bytes)`)
+                } catch (base64Error) {
+                  console.error('  - Failed to create base64:', base64Error)
+                }
 
-          // Convert to public URL path
-          const relativeFramePath = path.relative(
-            path.join(process.cwd(), 'public'),
-            framePath
+                return {
+                  timestamp_seconds: timestampSeconds,
+                  timestamp_label: timestampLabel,
+                  image_url: imageUrl,
+                  image_base64: base64Image,
+                }
+              } catch (error) {
+                console.error(`  - Error extracting frame at ${timestampSeconds}s:`, error)
+                return null
+              }
+            })
           )
-          const imageUrl = '/' + relativeFramePath.replace(/\\/g, '/')
-          
-          console.log(`Image accessible at: ${imageUrl}`)
 
-          // For Railway/production: Also include base64 as fallback
-          let base64Image = ''
-          try {
-            const imageBuffer = fs.readFileSync(framePath)
-            base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
-            console.log(`Base64 image created (${imageBuffer.length} bytes)`)
-          } catch (base64Error) {
-            console.error('Failed to create base64 image:', base64Error)
-          }
+          // Filter out failed screenshots
+          const validScreenshots = screenshots.filter(s => s !== null)
+          
+          console.log(`Successfully captured ${validScreenshots.length}/${timestampsToCapture.length} screenshots`)
+
+          // For backward compatibility, keep the first screenshot as primary image
+          const primaryScreenshot = validScreenshots[0]
 
           return {
             ...task,
-            image_url: imageUrl,
-            image_base64: base64Image, // Fallback for Railway
+            image_url: primaryScreenshot?.image_url || '',
+            image_base64: primaryScreenshot?.image_base64 || '',
+            screenshots: validScreenshots.length > 1 ? validScreenshots : undefined, // Only include if multiple
             loom_url: generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds),
           }
         } catch (error) {
-          console.error(`Error extracting frame for task ${index + 1}:`, error)
-          // Return task without image if frame extraction fails
+          console.error(`Error processing task ${index + 1}:`, error)
+          // Return task without images if extraction fails
           return {
             ...task,
             image_url: '',
