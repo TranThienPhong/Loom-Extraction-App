@@ -112,10 +112,10 @@ export default function Results() {
         console.warn('[Results] ⚠️ sessionStorage failed:', error)
       }
       
-      // Method 2: IndexedDB (if sessionStorage didn't work or had no images)
-      if (loadedTasks.length === 0 || (loadedTasks[0] && !loadedTasks[0].image_base64 && !loadedTasks[0].screenshots)) {
+      // Method 2: IndexedDB (PRIORITIZE - always try if no images in sessionStorage)
+      if (loadedTasks.length === 0 || (loadedTasks[0] && (!loadedTasks[0].screenshots || !loadedTasks[0].screenshots[0]?.image_base64))) {
         try {
-          console.log('[Results] 🔄 Trying IndexedDB...')
+          console.log('[Results] 🔄 Trying IndexedDB (no images in sessionStorage)...')
           const indexedDBData = await getProcessingResults()
           if (indexedDBData && indexedDBData.tasks) {
             console.log('[Results] 📦 IndexedDB found:', indexedDBData.tasks.length, 'tasks')
@@ -386,13 +386,23 @@ export default function Results() {
                               }
                             }}
                           />
-                          {/* Permanent timestamp overlay - bottom left (like burned-in subtitles) */}
-                          <div className="absolute bottom-2 left-2 bg-black bg-opacity-80 text-white text-sm font-bold py-1 px-3 rounded pointer-events-none border border-black shadow-lg">
-                            {screenshot.timestamp_label}
-                          </div>
+                          {/* Permanent timestamp overlay - bottom left (clickable to go to Loom) */}
+                          <a
+                            href={screenshot.timestamp_seconds 
+                              ? generateLoomUrlWithTimestamp(videoId, screenshot.timestamp_seconds)
+                              : task.loom_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="absolute bottom-2 left-2 bg-black bg-opacity-80 hover:bg-opacity-95 text-white text-sm font-bold py-1 px-3 rounded border border-black shadow-lg transition-all z-10"
+                          >
+                            ⏱ {screenshot.timestamp_label}
+                          </a>
                           {/* Hover overlay - centered */}
-                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center">
-                           
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center pointer-events-none">
+                            <span className="text-white font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                              🔍 Click to enlarge
+                            </span>
                           </div>
                         </div>
                       ))}
