@@ -39,15 +39,41 @@ export default function Home() {
       const data = await response.json()
       
       if (response.ok) {
-        // Use IndexedDB for Railway compatibility (50MB+ quota vs sessionStorage 5-10MB)
-        console.log('[App] Storing results with IndexedDB...')
+        console.log('[App] 📦 Received data with', data.tasks?.length, 'tasks')
+        
+        // Log first task to verify base64 exists
+        if (data.tasks && data.tasks.length > 0) {
+          const firstTask = data.tasks[0]
+          console.log('[App] First task has image_base64:', !!firstTask.image_base64)
+          console.log('[App] First task has screenshots:', firstTask.screenshots?.length || 0)
+          if (firstTask.screenshots && firstTask.screenshots.length > 0) {
+            console.log('[App] First screenshot has base64:', !!firstTask.screenshots[0].image_base64)
+            console.log('[App] Base64 length:', firstTask.screenshots[0].image_base64?.length || 0)
+          }
+        }
+        
+        // DUAL STORAGE: Try both methods for maximum reliability
+        let storageSuccess = false
+        
+        // Method 1: IndexedDB (best for Railway, 50MB+ quota)
         try {
+          console.log('[App] 💾 Attempting IndexedDB storage...')
           await storeProcessingResults(data)
-          console.log('[App] ✅ Successfully stored in IndexedDB')
+          console.log('[App] ✅ IndexedDB storage SUCCESS')
+          storageSuccess = true
         } catch (indexedDBError) {
-          console.error('[App] ❌ IndexedDB failed:', indexedDBError)
-          
-          // Ultimate fallback: try sessionStorage without base64
+          console.error('[App] ❌ IndexedDB FAILED:', indexedDBError)
+        }
+        
+        // Method 2: sessionStorage (backup for local dev)
+        try {
+          console.log('[App] 💾 Attempting sessionStorage...')
+          sessionStorage.setItem('loomResults', JSON.stringify(data))
+          console.log('[App] ✅ sessionStorage SUCCESS')
+          storageSuccess = true
+        } catch (quotaError) {
+          console.warn('[App] ⚠️ sessionStorage quota exceeded')  
+          // Try without base64 as last resort
           try {
             const dataWithoutBase64 = {
               ...data,
@@ -61,12 +87,18 @@ export default function Home() {
               }))
             }
             sessionStorage.setItem('loomResults', JSON.stringify(dataWithoutBase64))
-            console.log('[App] ⚠️ Stored without images in sessionStorage (fallback)')
-          } catch (sessionStorageError) {
-            console.error('[App] ❌ All storage methods failed')
+            console.log('[App] ⚠️ Stored without images in sessionStorage')
+          } catch (e) {
+            console.error('[App] ❌ sessionStorage complete failure')
           }
         }
         
+        if (!storageSuccess) {
+          alert('Warning: Failed to store images. They may not display correctly.')
+        }
+        
+        // Small delay to ensure storage completes
+        await new Promise(resolve => setTimeout(resolve, 100))
         router.push('/results')
       } else {
         setError({

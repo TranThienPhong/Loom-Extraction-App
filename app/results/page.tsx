@@ -32,9 +32,10 @@ export default function Results() {
   const [videoId, setVideoId] = useState('')
   const [imageErrors, setImageErrors] = useState<{[key: string | number]: boolean}>({})
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
-  const [lightboxTimestamp, setLightboxTimestamp] = useState<string>('')
+  const  [lightboxTimestamp, setLightboxTimestamp] = useState<string>('')
   const [lightboxIndex, setLightboxIndex] = useState<number>(0)
   const [currentTaskScreenshots, setCurrentTaskScreenshots] = useState<Screenshot[]>([])
+  const [debugInfo, setDebugInfo] = useState<string>('')
   const router = useRouter()
 
   // Helper function to convert image URL to base64 for PDF export (fallback for local dev)
@@ -95,34 +96,94 @@ export default function Results() {
 
   useEffect(() => {
     const loadResults = async () => {
-      console.log('[Results] Loading processing results...')
+      console.log('[Results] 🔍 Loading processing results...')
+      let loadedTasks = []
+      let loadedVideoId = ''
       
-      // Try IndexedDB first (Railway-compatible)
-      const indexedDBData = await getProcessingResults()
-      if (indexedDBData) {
-        console.log('[Results] ✅ Loaded from IndexedDB:', indexedDBData.tasks.length, 'tasks')
-        setTasks(indexedDBData.tasks || [])
-        setVideoId(indexedDBData.videoId || '')
-        return
-      }
-
-      // Fallback to sessionStorage (local dev)
-      const resultsData = sessionStorage.getItem('loomResults')
-      if (!resultsData) {
-        console.log('[Results] ❌ No data found, redirecting to home')
-        router.push('/')
-        return
-      }
-
+      // Try BOTH storage methods and use whatever works
+      
+      // Method 1: sessionStorage (fastest, try first)
       try {
-        const data = JSON.parse(resultsData)
-        console.log('[Results] ⚠️ Loaded from sessionStorage (fallback):', data.tasks?.length, 'tasks')
-        setTasks(data.tasks || [])
-        setVideoId(data.videoId || '')
+        const resultsData = sessionStorage.getItem('loomResults')
+        if (resultsData) {
+          const data = JSON.parse(resultsData)
+          console.log('[Results] 📦 sessionStorage found:', data.tasks?.length, 'tasks')
+          if (data.tasks && data.tasks.length > 0) {
+            const firstTask = data.tasks[0]
+            console.log('[Results] First task has base64:', !!firstTask.image_base64)
+            console.log('[Results] First task screenshots:', firstTask.screenshots?.length || 0)
+            if (firstTask.screenshots && firstTask.screenshots.length > 0) {
+              console.log('[Results] First screenshot has base64:', !!firstTask.screenshots[0].image_base64, 'length:', firstTask.screenshots[0].image_base64?.length || 0)
+            }
+            loadedTasks = data.tasks
+            loadedVideoId = data.videoId
+          }
+        }
       } catch (error) {
-        console.error('[Results] ❌ Failed to parse sessionStorage data:', error)
-        router.push('/')
+        console.warn('[Results] ⚠️ sessionStorage failed:', error)
       }
+      
+      // Method 2: IndexedDB (if sessionStorage didn't work or had no images)
+      if (loadedTasks.length === 0 || (loadedTasks[0] && !loadedTasks[0].image_base64 && !loadedTasks[0].screenshots)) {
+        try {
+          console.log('[Results] 🔄 Trying IndexedDB...')
+          const indexedDBData = await getProcessingResults()
+          if (indexedDBData && indexedDBData.tasks) {
+            console.log('[Results] 📦 IndexedDB found:', indexedDBData.tasks.length, 'tasks')
+            if (indexedDBData.tasks.length > 0) {
+              const firstTask = indexedDBData.tasks[0]
+              console.log('[Results] IndexedDB first task has base64:', !!firstTask.image_base64)
+              if (firstTask.screenshots && firstTask.screenshots.length > 0) {
+                console.log('[Results] IndexedDB first screenshot has base64:', !!firstTask.screenshots[0].image_base64)
+              }
+            }
+            loadedTasks = indexedDBData.tasks
+            loadedVideoId = indexedDBData.videoId
+          }
+        } catch (error) {
+          console.error('[Results] ❌ IndexedDB failed:', error)
+        }
+      }
+
+      // Check if we have data
+      if (loadedTasks.length === 0) {
+        console.error('[Results] ❌ NO DATA FOUND in any storage')
+        alert('No results found. Please try processing the video again.')
+        router.push('/')
+        return
+      }
+
+      console.log('[Results] ✅ Setting', loadedTasks.length, 'tasks')
+      setTasks(loadedTasks)
+      setVideoId(loadedVideoId)
+      
+      // Build debug info for display
+      let debug = `📊 Storage Debug Info:\n`
+      debug += `✅ Loaded ${loadedTasks.length} tasks\n`
+      loadedTasks.forEach((task: Task, i: number) => {
+        debug += `\nTask ${i + 1}: ${task.task_name}\n`
+        debug += `  - Primary image: ${task.image_base64 ? '✅ ' + (task.image_base64.length / 1024).toFixed(1) + 'KB' : '❌ Missing'}\n`
+        debug += `  - Screenshots: ${task.screenshots?.length || 0}\n`
+        if (task.screenshots) {
+          task.screenshots.forEach((s: Screenshot, j: number) => {
+            debug += `    ${j + 1}. ${s.timestamp_label}: ${s.image_base64 ? '✅ ' + (s.image_base64.length / 1024).toFixed(1) + 'KB' : '❌ Missing'}\n`
+          })
+        }
+      })
+      setDebugInfo(debug)
+      
+      // Debug: Log what we're about to render
+      setTimeout(() => {
+        console.log('[Results] 🎨 Rendering tasks:', loadedTasks.length)
+        loadedTasks.forEach((task: Task, i: number) => {
+          console.log(`[Results] Task ${i + 1}:`, {
+            name: task.task_name,
+            hasBase64: !!task.image_base64,
+            screenshotCount: task.screenshots?.length || 0,
+            firstScreenshotHasBase64: task.screenshots?.[0]?.image_base64 ? true : false
+          })
+        })
+      }, 100)
     }
 
     loadResults()
@@ -226,6 +287,12 @@ export default function Results() {
               ? `🔗 View screenshot ${s + 1} in Loom`
               : '🔗 Click image or this link to view in Loom'
             doc.textWithLink(linkText, 20, yPosition, { url: screenshotLoomUrl })
+            yPosition += 5
+            
+            // Add direct Loom link as requested by boss
+            doc.setFontSize(8)
+            doc.setTextColor(100, 100, 100)
+            doc.text(`Direct link: ${screenshotLoomUrl}`, 20, yPosition)
             yPosition += 8
           } catch (error) {
             console.error('Error adding image to PDF:', error)
@@ -279,6 +346,26 @@ export default function Results() {
             </button>
           </div>
         </div>
+
+        {/* Debug Panel - Visible storage diagnostics */}
+        {debugInfo && (
+          <div className="mb-6 bg-black text-green-400 p-4 rounded-lg border-2 border-green-600 font-mono text-xs overflow-x-auto">
+            <div className="flex justify-between items-start mb-2">
+              <div className="font-bold text-green-300 text-sm">🔍 DEBUG MODE - Storage Diagnostics</div>
+              <button 
+                onClick={() => setDebugInfo('')}
+                className="text-red-400 hover:text-red-300 font-bold"
+                title="Close debug panel"
+              >
+                ✖
+              </button>
+            </div>
+            <pre className="whitespace-pre-wrap">{debugInfo}</pre>
+            <div className="mt-3 pt-3 border-t border-green-800 text-green-300 text-xs">
+              💡 Tip: Open browser DevTools (F12) → Console tab to see detailed logs
+            </div>
+          </div>
+        )}
 
         <div className="space-y-6">
           {tasks.map((task, index) => (
