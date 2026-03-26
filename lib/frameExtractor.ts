@@ -47,11 +47,25 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     throw new Error(`Video file not found: ${videoPath}`)
   }
 
-  // Create output directory
+  // Create output directory (CRITICAL: Railway needs this!)
   // @ts-ignore - turbopack ignore: dynamic path only used at runtime
   const frameDir = outputDir || path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames')
+  
+  // Ensure parent directories exist
+  const publicDir = path.join(process.cwd(), 'public')
+  const tempDir = path.join(publicDir, 'temp')
+  
+  if (!fs.existsSync(publicDir)) {
+    fs.mkdirSync(publicDir, { recursive: true })
+    console.log('Created public directory')
+  }
+  if (!fs.existsSync(tempDir)) {
+    fs.mkdirSync(tempDir, { recursive: true })
+    console.log('Created temp directory')
+  }
   if (!fs.existsSync(frameDir)) {
     fs.mkdirSync(frameDir, { recursive: true })
+    console.log(`Created frames directory: ${frameDir}`)
   }
 
   // Generate unique filename
@@ -77,21 +91,47 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     // Use simple escaping - replace : with hyphen for compatibility across systems
     const safeTimestamp = timestampText.replace(/:/g, '-')
     
-    // Use fontfile parameter for better compatibility, fallback to system font
-    // box=1 creates background, boxcolor with @0.7 for 70% opacity
-    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -vf "drawtext=text='${safeTimestamp}':fontcolor=white:fontsize=40:box=1:boxcolor=black@0.8:boxborderw=10:x=30:y=30" -q:v 2 "${framePath}"`
+    // Use DejaVu Sans font (installed via nixpacks) or fallback to no text
+    // Try with font first, fallback to extraction without overlay if fonts missing
+    const commandWithOverlay = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -vf "drawtext=text='${safeTimestamp}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontcolor=white:fontsize=40:box=1:boxcolor=black@0.8:boxborderw=10:x=30:y=30" -q:v 2 "${framePath}"`
+    const commandNoOverlay = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
     
     console.log(`Extracting frame at ${timestampSeconds}s with timestamp overlay from ${videoPath}`)
-    const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 1024 * 1024 * 5, // 5MB buffer
-    })
-
-    if (stderr && !stderr.includes('frame=')) {
-      console.error('FFmpeg stderr:', stderr)
+    
+    let extractionSuccessful = false
+    let lastError: any = null
+    
+    // Try with timestamp overlay first
+    try {
+      const { stdout, stderr } = await execAsync(commandWithOverlay, {
+        maxBuffer: 1024 * 1024 * 5, // 5MB buffer
+      })
+      
+      if (stderr && !stderr.includes('frame=') && stderr.includes('Cannot find a valid font')) {
+        throw new Error('Font not available, will try without overlay')
+      }
+      
+      extractionSuccessful = true
+      console.log('✅ Frame extracted with timestamp overlay')
+    } catch (overlayError: any) {
+      console.warn('⚠️ Timestamp overlay failed (fonts missing?), trying without overlay...')
+      lastError = overlayError
+      
+      // Fallback: Extract without timestamp overlay
+      try {
+        await execAsync(commandNoOverlay, {
+          maxBuffer: 1024 * 1024 * 5,
+        })
+        extractionSuccessful = true
+        console.log('✅ Frame extracted WITHOUT timestamp overlay (font issues)')
+      } catch (noOverlayError: any) {
+        lastError = noOverlayError
+        console.error('❌ Both extraction methods failed:', noOverlayError.message)
+      }
     }
 
-    if (!fs.existsSync(framePath)) {
-      throw new Error('Frame file was not created')
+    if (!extractionSuccessful || !fs.existsSync(framePath)) {
+      throw new Error('Frame file was not created after trying both methods')
     }
 
     console.log(`Frame extracted successfully: ${framePath}`)
