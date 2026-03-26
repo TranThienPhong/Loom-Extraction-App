@@ -55,38 +55,27 @@ export default function Results() {
     }
   }
 
-  // Navigation functions for lightbox
-  const showPreviousImage = () => {
-    if (currentTaskScreenshots.length > 0) {
-      const newIndex = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
-      setLightboxIndex(newIndex)
-      const screenshot = currentTaskScreenshots[newIndex]
-      setLightboxImage(screenshot.image_base64 || screenshot.image_url)
-      setLightboxTimestamp(screenshot.timestamp_label)
-    }
-  }
-
-  const showNextImage = () => {
-    if (currentTaskScreenshots.length > 0) {
-      const newIndex = (lightboxIndex + 1) % currentTaskScreenshots.length
-      setLightboxIndex(newIndex)
-      const screenshot = currentTaskScreenshots[newIndex]
-      setLightboxImage(screenshot.image_base64 || screenshot.image_url)
-      setLightboxTimestamp(screenshot.timestamp_label)
-    }
-  }
-
-  // Keyboard navigation for lightbox
+  // Keyboard navigation for lightbox (with inline navigation logic to avoid stale closure)
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      if (lightboxImage) {
-        if (e.key === 'ArrowLeft' || e.key === 'Left') {
-          showPreviousImage()
-        } else if (e.key === 'ArrowRight' || e.key === 'Right') {
-          showNextImage()
-        } else if (e.key === 'Escape') {
-          setLightboxImage(null)
-        }
+      if (!lightboxImage || currentTaskScreenshots.length === 0) return
+      
+      if (e.key === 'ArrowLeft' || e.key === 'Left') {
+        // Previous image
+        const newIndex = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
+        setLightboxIndex(newIndex)
+        const screenshot = currentTaskScreenshots[newIndex]
+        setLightboxImage(screenshot.image_base64 || screenshot.image_url)
+        setLightboxTimestamp(screenshot.timestamp_label)
+      } else if (e.key === 'ArrowRight' || e.key === 'Right') {
+        // Next image
+        const newIndex = (lightboxIndex + 1) % currentTaskScreenshots.length
+        setLightboxIndex(newIndex)
+        const screenshot = currentTaskScreenshots[newIndex]
+        setLightboxImage(screenshot.image_base64 || screenshot.image_url)
+        setLightboxTimestamp(screenshot.timestamp_label)
+      } else if (e.key === 'Escape') {
+        setLightboxImage(null)
       }
     }
 
@@ -347,26 +336,6 @@ export default function Results() {
           </div>
         </div>
 
-        {/* Debug Panel - Visible storage diagnostics */}
-        {debugInfo && (
-          <div className="mb-6 bg-black text-green-400 p-4 rounded-lg border-2 border-green-600 font-mono text-xs overflow-x-auto">
-            <div className="flex justify-between items-start mb-2">
-              <div className="font-bold text-green-300 text-sm">🔍 DEBUG MODE - Storage Diagnostics</div>
-              <button 
-                onClick={() => setDebugInfo('')}
-                className="text-red-400 hover:text-red-300 font-bold"
-                title="Close debug panel"
-              >
-                ✖
-              </button>
-            </div>
-            <pre className="whitespace-pre-wrap">{debugInfo}</pre>
-            <div className="mt-3 pt-3 border-t border-green-800 text-green-300 text-xs">
-              💡 Tip: Open browser DevTools (F12) → Console tab to see detailed logs
-            </div>
-          </div>
-        )}
-
         <div className="space-y-6">
           {tasks.map((task, index) => (
             <div
@@ -423,9 +392,7 @@ export default function Results() {
                           </div>
                           {/* Hover overlay - centered */}
                           <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center">
-                            <span className="text-white font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
-                              🔍 Click to enlarge
-                            </span>
+                           
                           </div>
                         </div>
                       ))}
@@ -490,7 +457,11 @@ export default function Results() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    showPreviousImage()
+                    const newIndex = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
+                    setLightboxIndex(newIndex)
+                    const screenshot = currentTaskScreenshots[newIndex]
+                    setLightboxImage(screenshot.image_base64 || screenshot.image_url)
+                    setLightboxTimestamp(screenshot.timestamp_label)
                   }}
                   className="absolute left-4 top-1/2 transform -translate-x-[5rem] -translate-y-1/2 text-gray text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
                   aria-label="Previous image"
@@ -504,7 +475,11 @@ export default function Results() {
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    showNextImage()
+                    const newIndex = (lightboxIndex + 1) % currentTaskScreenshots.length
+                    setLightboxIndex(newIndex)
+                    const screenshot = currentTaskScreenshots[newIndex]
+                    setLightboxImage(screenshot.image_base64 || screenshot.image_url)
+                    setLightboxTimestamp(screenshot.timestamp_label)
                   }}
                   className="absolute right-4 top-1/2 transform translate-x-[5rem] -translate-y-1/2 text-gray text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
                   aria-label="Next image"

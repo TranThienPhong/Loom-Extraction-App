@@ -95,6 +95,21 @@ export async function POST(request: NextRequest) {
       throw new Error('Video path is not set')
     }
     
+    // Helper function to limit concurrency (prevent Railway resource exhaustion)
+    const processWithConcurrencyLimit = async <T, R>(
+      items: T[],
+      limit: number,
+      fn: (item: T) => Promise<R>
+    ): Promise<R[]> => {
+      const results: R[] = []
+      for (let i = 0; i < items.length; i += limit) {
+        const batch = items.slice(i, i + limit)
+        const batchResults = await Promise.all(batch.map(fn))
+        results.push(...batchResults)
+      }
+      return results
+    }
+    
     const tasksWithImages = await Promise.all(
       tasks.map(async (task, index) => {
         try {
@@ -105,14 +120,15 @@ export async function POST(request: NextRequest) {
             ? task.screenshot_timestamps
             : [task.timestamp_seconds] // Fallback to primary timestamp
           
-          console.log(`Task ${index + 1}: screenshot_timestamps from AI: ${task.screenshot_timestamps ? JSON.stringify(task.screenshot_timestamps) : 'NOT PROVIDED'}`)
           console.log(`Capturing ${timestampsToCapture.length} screenshot(s) for task ${index + 1}`)
           
-          const screenshots = await Promise.all(
-            timestampsToCapture.map(async (timestampSeconds, screenshotIndex) => {
+          // CRITICAL: Limit concurrent ffmpeg processes to 3 to prevent Railway resource exhaustion
+          const screenshots = await processWithConcurrencyLimit(
+            timestampsToCapture,
+            3, // Max 3 concurrent frame extractions
+            async (timestampSeconds) => {
               try {
                 const timestampLabel = secondsToTimestamp(timestampSeconds)
-                console.log(`  - Extracting frame at ${timestampLabel} (${screenshotIndex + 1}/${timestampsToCapture.length})`)
                 
                 const framePath = await extractFrame({
                   videoPath: videoPath!,
@@ -120,8 +136,6 @@ export async function POST(request: NextRequest) {
                   timestampLabel,
                 })
                 
-                console.log(`  - Frame extracted successfully: ${framePath}`)
-
                 // Convert to public URL path
                 const relativeFramePath = path.relative(
                   path.join(process.cwd(), 'public'),
@@ -134,7 +148,6 @@ export async function POST(request: NextRequest) {
                 try {
                   const imageBuffer = fs.readFileSync(framePath)
                   base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
-                  console.log(`  - Base64 created (${imageBuffer.length} bytes)`)
                 } catch (base64Error) {
                   console.error('  - ❌ Failed to create base64:', base64Error)
                 }
@@ -146,10 +159,10 @@ export async function POST(request: NextRequest) {
                   image_base64: base64Image,
                 }
               } catch (error) {
-                console.error(`  - ❌ ERROR extracting frame at ${timestampSeconds}s:`, error)
+                console.error(`  - ❌ ERROR at ${timestampSeconds}s`)
                 return null
               }
-            })
+            }
           )
 
           // Filter out failed screenshots
