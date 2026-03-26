@@ -417,8 +417,15 @@ export default function Results() {
                               }
                             }}
                           />
-                          <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-70 text-white text-xs py-1 px-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            ⏱ {screenshot.timestamp_label} • Click to enlarge
+                          {/* Permanent timestamp overlay - bottom left (like burned-in subtitles) */}
+                          <div className="absolute bottom-2 left-2 bg-black bg-opacity-80 text-white text-sm font-bold py-1 px-3 rounded pointer-events-none border border-black shadow-lg">
+                            {screenshot.timestamp_label}
+                          </div>
+                          {/* Hover overlay - centered */}
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center">
+                            <span className="text-white font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
+                              🔍 Click to enlarge
+                            </span>
                           </div>
                         </div>
                       ))}
