@@ -79,62 +79,22 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   }
 
   try {
-    // Extract frame using ffmpeg with timestamp burned into the image
+    // Extract frame using ffmpeg (simple extraction without overlay)
     // -ss: seek to timestamp
     // -i: input file
     // -vframes 1: extract one frame
-    // -vf: video filter to add timestamp overlay
     // -q:v 2: high quality (1-31, lower is better)
-    const timestampText = options.timestampLabel || secondsToTimestamp(timestampSeconds)
+    // Note: Timestamps are added via CSS overlays on the frontend
     
-    // Build ffmpeg command with drawtext filter to burn timestamp onto frame
-    // Use simple escaping - replace : with hyphen for compatibility across systems
-    const safeTimestamp = timestampText.replace(/:/g, '-')
+    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
     
-    // Use DejaVu Sans font (installed via nixpacks) or fallback to no text
-    // Try with font first, fallback to extraction without overlay if fonts missing
-    const commandWithOverlay = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -vf "drawtext=text='${safeTimestamp}':fontfile=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf:fontcolor=white:fontsize=40:box=1:boxcolor=black@0.8:boxborderw=10:x=30:y=30" -q:v 2 "${framePath}"`
-    const commandNoOverlay = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
+    console.log(`Extracting frame at ${timestampSeconds}s from ${videoPath}`)
     
-    console.log(`Extracting frame at ${timestampSeconds}s with timestamp overlay from ${videoPath}`)
+    await execAsync(command, {
+      maxBuffer: 1024 * 1024 * 5, // 5MB buffer
+    })
     
-    let extractionSuccessful = false
-    let lastError: any = null
-    
-    // Try with timestamp overlay first
-    try {
-      const { stdout, stderr } = await execAsync(commandWithOverlay, {
-        maxBuffer: 1024 * 1024 * 5, // 5MB buffer
-      })
-      
-      if (stderr && !stderr.includes('frame=') && stderr.includes('Cannot find a valid font')) {
-        throw new Error('Font not available, will try without overlay')
-      }
-      
-      extractionSuccessful = true
-      console.log('✅ Frame extracted with timestamp overlay')
-    } catch (overlayError: any) {
-      console.warn('⚠️ Timestamp overlay failed (fonts missing?), trying without overlay...')
-      lastError = overlayError
-      
-      // Fallback: Extract without timestamp overlay
-      try {
-        await execAsync(commandNoOverlay, {
-          maxBuffer: 1024 * 1024 * 5,
-        })
-        extractionSuccessful = true
-        console.log('✅ Frame extracted WITHOUT timestamp overlay (font issues)')
-      } catch (noOverlayError: any) {
-        lastError = noOverlayError
-        console.error('❌ Both extraction methods failed:', noOverlayError.message)
-      }
-    }
-
-    if (!extractionSuccessful || !fs.existsSync(framePath)) {
-      throw new Error('Frame file was not created after trying both methods')
-    }
-
-    console.log(`Frame extracted successfully: ${framePath}`)
+    console.log(`✅ Frame extracted successfully: ${framePath}`)
     
     // Verify file exists and has content
     const stats = fs.statSync(framePath)
