@@ -105,6 +105,7 @@ export async function POST(request: NextRequest) {
             ? task.screenshot_timestamps
             : [task.timestamp_seconds] // Fallback to primary timestamp
           
+          console.log(`Task ${index + 1}: screenshot_timestamps from AI: ${task.screenshot_timestamps ? JSON.stringify(task.screenshot_timestamps) : 'NOT PROVIDED'}`)
           console.log(`Capturing ${timestampsToCapture.length} screenshot(s) for task ${index + 1}`)
           
           const screenshots = await Promise.all(
@@ -118,6 +119,8 @@ export async function POST(request: NextRequest) {
                   timestampSeconds,
                   timestampLabel,
                 })
+                
+                console.log(`  - Frame extracted successfully: ${framePath}`)
 
                 // Convert to public URL path
                 const relativeFramePath = path.relative(
@@ -133,7 +136,7 @@ export async function POST(request: NextRequest) {
                   base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
                   console.log(`  - Base64 created (${imageBuffer.length} bytes)`)
                 } catch (base64Error) {
-                  console.error('  - Failed to create base64:', base64Error)
+                  console.error('  - ❌ Failed to create base64:', base64Error)
                 }
 
                 return {
@@ -143,7 +146,7 @@ export async function POST(request: NextRequest) {
                   image_base64: base64Image,
                 }
               } catch (error) {
-                console.error(`  - Error extracting frame at ${timestampSeconds}s:`, error)
+                console.error(`  - ❌ ERROR extracting frame at ${timestampSeconds}s:`, error)
                 return null
               }
             })
@@ -153,15 +156,24 @@ export async function POST(request: NextRequest) {
           const validScreenshots = screenshots.filter(s => s !== null)
           
           console.log(`Successfully captured ${validScreenshots.length}/${timestampsToCapture.length} screenshots`)
+          
+          // CRITICAL: Log if we have NO valid screenshots
+          if (validScreenshots.length === 0) {
+            console.error(`❌ Task ${index + 1} has NO valid screenshots! Frame extraction failed completely.`)
+          }
 
           // For backward compatibility, keep the first screenshot as primary image
           const primaryScreenshot = validScreenshots[0]
+          
+          // CRITICAL: Always include ALL screenshots (not just if > 1)
+          // Frontend needs to know about screenshots even if there's only 1!
+          const screenshotsToReturn = validScreenshots.length > 0 ? validScreenshots : []
 
           return {
             ...task,
             image_url: primaryScreenshot?.image_url || '',
             image_base64: primaryScreenshot?.image_base64 || '',
-            screenshots: validScreenshots.length > 1 ? validScreenshots : undefined, // Only include if multiple
+            screenshots: screenshotsToReturn, // CHANGED: Always return array, not undefined
             loom_url: generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds),
           }
         } catch (error) {

@@ -267,6 +267,13 @@ function parseAIResponse(responseText: string): AIAnalysisResult[] {
     }
 
     console.log(`Successfully parsed ${tasks.length} tasks`)
+    
+    // Log screenshot_timestamps presence for debugging
+    tasks.forEach((task, i) => {
+      const hasScreenshots = task.screenshot_timestamps && task.screenshot_timestamps.length > 0
+      console.log(`Task ${i + 1}: ${task.task_name} | screenshot_timestamps: ${hasScreenshots ? task.screenshot_timestamps?.length + ' frames' : 'MISSING'}`)
+    })
+    
     return tasks
   } catch (error) {
     console.error('Failed to parse AI response:', error)
