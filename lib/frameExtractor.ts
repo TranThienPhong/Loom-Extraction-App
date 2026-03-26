@@ -88,17 +88,12 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     
     const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
     
-    console.log(`Extracting frame at ${timestampSeconds}s from ${videoPath}`)
-    
     await execAsync(command, {
       maxBuffer: 1024 * 1024 * 5, // 5MB buffer
     })
     
-    console.log(`✅ Frame extracted successfully: ${framePath}`)
-    
     // Verify file exists and has content
     const stats = fs.statSync(framePath)
-    console.log(`Frame file size: ${stats.size} bytes`)
     
     if (stats.size === 0) {
       throw new Error('Frame file was created but is empty - ffmpeg may have failed')
