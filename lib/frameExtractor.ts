@@ -78,32 +78,60 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     return framePath
   }
 
-  try {
-    // Extract frame using ffmpeg (simple extraction without overlay)
-    // -ss: seek to timestamp
-    // -i: input file
-    // -vframes 1: extract one frame
-    // -q:v 2: high quality (1-31, lower is better)
-    // Note: Timestamps are added via CSS overlays on the frontend
-    
-    const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
-    
-    await execAsync(command, {
-      maxBuffer: 1024 * 1024 * 5, // 5MB buffer
-    })
-    
-    // Verify file exists and has content
-    const stats = fs.statSync(framePath)
-    
-    if (stats.size === 0) {
-      throw new Error('Frame file was created but is empty - ffmpeg may have failed')
+  // Retry logic with exponential backoff (for Railway resource issues)
+  const maxRetries = 3
+  let lastError: Error | null = null
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Extract frame using ffmpeg (simple extraction without overlay)
+      // -ss: seek to timestamp
+      // -i: input file
+      // -vframes 1: extract one frame
+      // -q:v 2: high quality (1-31, lower is better)
+      // Note: Timestamps are added via CSS overlays on the frontend
+      
+      const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
+      
+      await execAsync(command, {
+        maxBuffer: 1024 * 1024 * 5, // 5MB buffer
+      })
+      
+      // Verify file exists and has content
+      const stats = fs.statSync(framePath)
+      
+      if (stats.size === 0) {
+        throw new Error('Frame file was created but is empty - ffmpeg may have failed')
+      }
+      
+      // Success!
+      if (attempt > 1) {
+        console.log(`  ✓ Frame extraction succeeded on attempt ${attempt}`)
+      }
+      return framePath
+      
+    } catch (error: any) {
+      lastError = error
+      
+      // Check if it's a resource error that might benefit from retry
+      const isResourceError = error.message.includes('Resource temporarily unavailable') || 
+                             error.message.includes('pthread_create')
+      
+      if (isResourceError && attempt < maxRetries) {
+        const delayMs = Math.pow(2, attempt) * 1000 // Exponential backoff: 2s, 4s, 8s
+        console.log(`  ⚠️  Resource error on attempt ${attempt}/${maxRetries}, retrying in ${delayMs}ms...`)
+        await new Promise(resolve => setTimeout(resolve, delayMs))
+      } else if (attempt < maxRetries) {
+        console.log(`  ⚠️  Error on attempt ${attempt}/${maxRetries}, retrying...`)
+        await new Promise(resolve => setTimeout(resolve, 1000)) // 1s delay for other errors
+      } else {
+        console.error(`  ❌ All ${maxRetries} attempts failed for frame at ${timestampSeconds}s`)
+      }
     }
-    
-    return framePath
-  } catch (error: any) {
-    console.error('Error extracting frame:', error)
-    throw new Error(`Failed to extract frame at ${timestampSeconds}s: ${error.message}`)
   }
+  
+  // All retries exhausted
+  throw new Error(`Failed to extract frame at ${timestampSeconds}s after ${maxRetries} attempts: ${lastError?.message}`)
 }
 
 /**

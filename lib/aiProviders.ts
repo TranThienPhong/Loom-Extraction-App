@@ -40,7 +40,7 @@ export async function analyzeWithClaude(transcript: TranscriptEntry[]): Promise<
     
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
+      max_tokens: 16384, // Increased from 4096 to handle long videos with many tasks
       messages: [{ role: 'user', content: prompt }],
     })
 
@@ -204,7 +204,9 @@ Instructions:
    - For simple issues, 1 screenshot at the mention time is enough
    - For complex interactions, capture 2-3 moments (before/during/after)
 4. Create a clear, actionable task name (5-10 words)
-5. Write a detailed task description including all relevant context
+5. Write a CONCISE task description (2-3 sentences max, ~50 words) with key context only
+
+**CRITICAL**: Keep descriptions SHORT - Railway has limited resources. Focus on: what needs fixing, where it is, and why.
 
 Return ONLY a JSON array with no additional text, explanation, or markdown formatting. Each object must have exactly these fields:
 {
@@ -221,17 +223,19 @@ Example output format:
     "timestamp_seconds": 44,
     "timestamp_label": "0:44",
     "task_name": "Fix header alignment on mobile",
-    "task_description": "The header navigation is not centered properly on mobile devices. It appears shifted to the left by about 10 pixels. This is visible on the home page when viewing on iPhone.",
+    "task_description": "Header navigation shifted left ~10px on mobile. Visible on home page iPhone view.",
     "screenshot_timestamps": [44, 46]
   },
   {
     "timestamp_seconds": 120,
     "timestamp_label": "2:00",
     "task_name": "Button click shows error popup",
-    "task_description": "When clicking the submit button, an error popup appears saying 'Invalid data'. Need to add proper validation before submission.",
+    "task_description": "Submit button shows 'Invalid data' error. Add validation before submission.",
     "screenshot_timestamps": [119, 121, 123]
   }
 ]
+
+**IMPORTANT**: Keep ALL descriptions under 50 words. Be concise - remove unnecessary details.
 
 Return the JSON array now:`
 }

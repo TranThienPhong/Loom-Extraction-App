@@ -122,12 +122,17 @@ export async function POST(request: NextRequest) {
           
           console.log(`Capturing ${timestampsToCapture.length} screenshot(s) for task ${index + 1}`)
           
-          // CRITICAL: Limit concurrent ffmpeg processes to 3 to prevent Railway resource exhaustion
+          // CRITICAL: Sequential processing (1 at a time) to prevent Railway resource exhaustion
           const screenshots = await processWithConcurrencyLimit(
             timestampsToCapture,
-            3, // Max 3 concurrent frame extractions
+            1, // Max 1 concurrent frame extraction (prevents thread/memory exhaustion on Railway)
             async (timestampSeconds) => {
               try {
+                // Add small delay between extractions to prevent Railway resource exhaustion
+                if (timestampSeconds !== timestampsToCapture[0]) {
+                  await new Promise(resolve => setTimeout(resolve, 500)) // 500ms delay
+                }
+                
                 const timestampLabel = secondsToTimestamp(timestampSeconds)
                 
                 const framePath = await extractFrame({
