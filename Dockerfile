@@ -27,8 +27,8 @@ RUN npm run build
 # Create runtime directories
 RUN mkdir -p temp public/temp/frames
 
-# Expose port
+# Expose port (Railway overrides this with $PORT env var)
 EXPOSE 3000
 
-# Start the app
-CMD ["npm", "start"]
+# Start the app — Railway injects PORT env var at runtime
+CMD ["sh", "-c", "npm start -- -p ${PORT:-3000}"]

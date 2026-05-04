@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+npm-debug.log*
+
+# Next.js build output
+.next/
+out/
+
+# Cached videos and frames (large files, not needed in image)
+temp/
+public/temp/
+
+# Git
+.git/
+.gitignore
+
+# Dev env
+.env*.local
+.env
+
+# OS
+.DS_Store
+*.pem
+
+# Test/misc
+coverage/
+*.tsbuildinfo
