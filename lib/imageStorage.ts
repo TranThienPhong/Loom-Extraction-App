@@ -15,6 +15,7 @@ interface StoredImage {
 
 interface TaskData {
   videoId: string
+  summary?: string
   tasks: any[]
   timestamp: number
 }
@@ -54,7 +55,7 @@ class ImageStorageManager {
     })
   }
 
-  async storeTaskData(videoId: string, tasks: any[]): Promise<void> {
+  async storeTaskData(videoId: string, tasks: any[], summary?: string): Promise<void> {
     if (!this.db) await this.init()
 
     return new Promise((resolve, reject) => {
@@ -63,6 +64,7 @@ class ImageStorageManager {
 
       const data: TaskData = {
         videoId,
+        summary,
         tasks,
         timestamp: Date.now()
       }
@@ -187,7 +189,7 @@ export async function storeProcessingResults(data: any): Promise<void> {
       }))
     }))
 
-    await imageStorage.storeTaskData(data.videoId, tasksWithoutBase64)
+    await imageStorage.storeTaskData(data.videoId, tasksWithoutBase64, data.summary)
 
     // Store each base64 image separately in IndexedDB
     for (let i = 0; i < data.tasks.length; i++) {
@@ -290,6 +292,7 @@ export async function getProcessingResults(): Promise<any | null> {
 
     return {
       videoId,
+      summary: taskData.summary || '',
       tasks: tasksWithImages,
       totalTasks: tasksWithImages.length
     }

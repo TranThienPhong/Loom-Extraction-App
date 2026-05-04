@@ -286,6 +286,42 @@ function parseAIResponse(responseText: string): AIAnalysisResult[] {
 }
 
 /**
+ * Generate a brief summary of the video based on the transcript
+ */
+export async function generateVideoSummary(transcript: TranscriptEntry[]): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return ''
+
+  const anthropic = new Anthropic({ apiKey })
+
+  // Use first 80 entries max (faster, cheaper for summary)
+  const sampleEntries = transcript.slice(0, 80)
+  const transcriptText = sampleEntries
+    .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
+    .join('\n')
+
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 256,
+      messages: [{
+        role: 'user',
+        content: `Based on this video transcript excerpt, write a concise 2-3 sentence summary of what the video is about. Focus on the main purpose, who is speaking, and what they are reviewing or providing feedback on. Be specific about the product or feature being discussed.
+
+Transcript:
+${transcriptText}
+
+Write only the summary, no preamble.`
+      }]
+    })
+    return message.content[0].type === 'text' ? message.content[0].text.trim() : ''
+  } catch (error) {
+    console.error('Summary generation failed:', error)
+    return ''
+  }
+}
+
+/**
  * Main function: tries providers in order until one succeeds
  */
 export async function analyzeTranscriptWithAI(transcript: TranscriptEntry[]): Promise<AIAnalysisResult[]> {

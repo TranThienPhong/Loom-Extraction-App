@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { getProcessingResults } from '@/lib/imageStorage'
 
-// Utility function to generate Loom URL with timestamp (moved inline to avoid server-side imports)
 function generateLoomUrlWithTimestamp(videoId: string, timestampSeconds: number): string {
   return `https://www.loom.com/share/${videoId}?t=${timestampSeconds}`
 }
@@ -17,286 +16,272 @@ interface Screenshot {
 }
 
 interface Task {
+  _id: string
   timestamp_seconds: number
   timestamp_label: string
   task_name: string
   task_description: string
   image_url: string
-  image_base64?: string // Base64 fallback for Railway/production (backward compatibility)
-  screenshots?: Screenshot[] // Multiple screenshots per task
+  image_base64?: string
+  screenshots?: Screenshot[]
   loom_url: string
 }
 
 export default function Results() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [videoId, setVideoId] = useState('')
-  const [imageErrors, setImageErrors] = useState<{[key: string | number]: boolean}>({})
+  const [summary, setSummary] = useState('')
+  const [editingSummary, setEditingSummary] = useState(false)
+  const [editedSummary, setEditedSummary] = useState('')
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
+  const [editTitle, setEditTitle] = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [lightboxImage, setLightboxImage] = useState<string | null>(null)
-  const  [lightboxTimestamp, setLightboxTimestamp] = useState<string>('')
+  const [lightboxTimestamp, setLightboxTimestamp] = useState<string>('')
   const [lightboxIndex, setLightboxIndex] = useState<number>(0)
   const [currentTaskScreenshots, setCurrentTaskScreenshots] = useState<Screenshot[]>([])
-  const [debugInfo, setDebugInfo] = useState<string>('')
   const router = useRouter()
 
-  // Helper function to convert image URL to base64 for PDF export (fallback for local dev)
-  const imageUrlToBase64 = async (url: string): Promise<string> => {
-    try {
-      const response = await fetch(url)
-      const blob = await response.blob()
-      return new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onloadend = () => resolve(reader.result as string)
-        reader.onerror = reject
-        reader.readAsDataURL(blob)
-      })
-    } catch (error) {
-      console.error('Failed to convert image to base64:', error)
-      throw error
-    }
-  }
-
-  // Keyboard navigation for lightbox (with inline navigation logic to avoid stale closure)
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
-      if (!lightboxImage || currentTaskScreenshots.length === 0) return
-      
-      if (e.key === 'ArrowLeft' || e.key === 'Left') {
-        // Previous image
-        const newIndex = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
-        setLightboxIndex(newIndex)
-        const screenshot = currentTaskScreenshots[newIndex]
-        setLightboxImage(screenshot.image_base64 || screenshot.image_url)
-        setLightboxTimestamp(screenshot.timestamp_label)
-      } else if (e.key === 'ArrowRight' || e.key === 'Right') {
-        // Next image
-        const newIndex = (lightboxIndex + 1) % currentTaskScreenshots.length
-        setLightboxIndex(newIndex)
-        const screenshot = currentTaskScreenshots[newIndex]
-        setLightboxImage(screenshot.image_base64 || screenshot.image_url)
-        setLightboxTimestamp(screenshot.timestamp_label)
-      } else if (e.key === 'Escape') {
-        setLightboxImage(null)
+      if (!lightboxImage) return
+      if (e.key === 'Escape') { setLightboxImage(null); return }
+      if (currentTaskScreenshots.length <= 1) return
+      if (e.key === 'ArrowLeft') {
+        const ni = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
+        setLightboxIndex(ni)
+        const s = currentTaskScreenshots[ni]
+        setLightboxImage(s.image_base64 || s.image_url)
+        setLightboxTimestamp(s.timestamp_label)
+      } else if (e.key === 'ArrowRight') {
+        const ni = (lightboxIndex + 1) % currentTaskScreenshots.length
+        setLightboxIndex(ni)
+        const s = currentTaskScreenshots[ni]
+        setLightboxImage(s.image_base64 || s.image_url)
+        setLightboxTimestamp(s.timestamp_label)
       }
     }
-
     window.addEventListener('keydown', handleKeyPress)
     return () => window.removeEventListener('keydown', handleKeyPress)
   }, [lightboxImage, lightboxIndex, currentTaskScreenshots])
 
   useEffect(() => {
     const loadResults = async () => {
-      console.log('[Results] 🔍 Loading processing results...')
-      let loadedTasks = []
+      let loadedTasks: any[] = []
       let loadedVideoId = ''
-      
-      // Try BOTH storage methods and use whatever works
-      
-      // Method 1: sessionStorage (fastest, try first)
+      let loadedSummary = ''
+
       try {
-        const resultsData = sessionStorage.getItem('loomResults')
-        if (resultsData) {
-          const data = JSON.parse(resultsData)
-          console.log('[Results] 📦 sessionStorage found:', data.tasks?.length, 'tasks')
-          if (data.tasks && data.tasks.length > 0) {
-            const firstTask = data.tasks[0]
-            console.log('[Results] First task has base64:', !!firstTask.image_base64)
-            console.log('[Results] First task screenshots:', firstTask.screenshots?.length || 0)
-            if (firstTask.screenshots && firstTask.screenshots.length > 0) {
-              console.log('[Results] First screenshot has base64:', !!firstTask.screenshots[0].image_base64, 'length:', firstTask.screenshots[0].image_base64?.length || 0)
-            }
+        const raw = sessionStorage.getItem('loomResults')
+        if (raw) {
+          const data = JSON.parse(raw)
+          if (data.tasks?.length > 0) {
             loadedTasks = data.tasks
-            loadedVideoId = data.videoId
+            loadedVideoId = data.videoId || ''
+            loadedSummary = data.summary || ''
           }
         }
-      } catch (error) {
-        console.warn('[Results] ⚠️ sessionStorage failed:', error)
-      }
-      
-      // Method 2: IndexedDB (PRIORITIZE - always try if no images in sessionStorage)
-      if (loadedTasks.length === 0 || (loadedTasks[0] && (!loadedTasks[0].screenshots || !loadedTasks[0].screenshots[0]?.image_base64))) {
+      } catch {}
+
+      if (loadedTasks.length === 0 || !loadedTasks[0]?.screenshots?.[0]?.image_base64) {
         try {
-          console.log('[Results] 🔄 Trying IndexedDB (no images in sessionStorage)...')
-          const indexedDBData = await getProcessingResults()
-          if (indexedDBData && indexedDBData.tasks) {
-            console.log('[Results] 📦 IndexedDB found:', indexedDBData.tasks.length, 'tasks')
-            if (indexedDBData.tasks.length > 0) {
-              const firstTask = indexedDBData.tasks[0]
-              console.log('[Results] IndexedDB first task has base64:', !!firstTask.image_base64)
-              if (firstTask.screenshots && firstTask.screenshots.length > 0) {
-                console.log('[Results] IndexedDB first screenshot has base64:', !!firstTask.screenshots[0].image_base64)
-              }
-            }
-            loadedTasks = indexedDBData.tasks
-            loadedVideoId = indexedDBData.videoId
+          const idb = await getProcessingResults()
+          if (idb?.tasks?.length > 0) {
+            loadedTasks = idb.tasks
+            loadedVideoId = idb.videoId || ''
+            loadedSummary = (idb as any).summary || ''
           }
-        } catch (error) {
-          console.error('[Results] ❌ IndexedDB failed:', error)
-        }
+        } catch {}
       }
 
-      // Check if we have data
       if (loadedTasks.length === 0) {
-        console.error('[Results] ❌ NO DATA FOUND in any storage')
         alert('No results found. Please try processing the video again.')
         router.push('/')
         return
       }
 
-      console.log('[Results] ✅ Setting', loadedTasks.length, 'tasks')
-      setTasks(loadedTasks)
+      const tasksWithIds: Task[] = loadedTasks.map((t: any, i: number) => ({
+        ...t,
+        _id: t._id ?? String(i),
+      }))
+
+      setTasks(tasksWithIds)
       setVideoId(loadedVideoId)
-      
-      // Build debug info for display
-      let debug = `📊 Storage Debug Info:\n`
-      debug += `✅ Loaded ${loadedTasks.length} tasks\n`
-      loadedTasks.forEach((task: Task, i: number) => {
-        debug += `\nTask ${i + 1}: ${task.task_name}\n`
-        debug += `  - Primary image: ${task.image_base64 ? '✅ ' + (task.image_base64.length / 1024).toFixed(1) + 'KB' : '❌ Missing'}\n`
-        debug += `  - Screenshots: ${task.screenshots?.length || 0}\n`
-        if (task.screenshots) {
-          task.screenshots.forEach((s: Screenshot, j: number) => {
-            debug += `    ${j + 1}. ${s.timestamp_label}: ${s.image_base64 ? '✅ ' + (s.image_base64.length / 1024).toFixed(1) + 'KB' : '❌ Missing'}\n`
-          })
-        }
-      })
-      setDebugInfo(debug)
-      
-      // Debug: Log what we're about to render
-      setTimeout(() => {
-        console.log('[Results] 🎨 Rendering tasks:', loadedTasks.length)
-        loadedTasks.forEach((task: Task, i: number) => {
-          console.log(`[Results] Task ${i + 1}:`, {
-            name: task.task_name,
-            hasBase64: !!task.image_base64,
-            screenshotCount: task.screenshots?.length || 0,
-            firstScreenshotHasBase64: task.screenshots?.[0]?.image_base64 ? true : false
-          })
-        })
-      }, 100)
+      setSummary(loadedSummary)
     }
 
     loadResults()
   }, [router])
 
+  const startEdit = (task: Task) => {
+    setEditingTaskId(task._id)
+    setEditTitle(task.task_name)
+    setEditDescription(task.task_description)
+  }
+
+  const saveEdit = (id: string) => {
+    setTasks(prev =>
+      prev.map(t =>
+        t._id === id
+          ? { ...t, task_name: editTitle.trim() || t.task_name, task_description: editDescription.trim() || t.task_description }
+          : t
+      )
+    )
+    setEditingTaskId(null)
+  }
+
+  const deleteTask = (id: string) => {
+    setTasks(prev => prev.filter(t => t._id !== id))
+    setSelectedIds(prev => { const s = new Set(prev); s.delete(id); return s })
+  }
+
+  const deleteSelected = () => {
+    setTasks(prev => prev.filter(t => !selectedIds.has(t._id)))
+    setSelectedIds(new Set())
+  }
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const s = new Set(prev)
+      s.has(id) ? s.delete(id) : s.add(id)
+      return s
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelectedIds(selectedIds.size === tasks.length ? new Set() : new Set(tasks.map(t => t._id)))
+  }
+
   const handleExportPDF = async () => {
     const { jsPDF } = await import('jspdf')
-    const doc = new jsPDF()
-    
-    let yPosition = 20
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+    const pageW = 210
+    const marginL = 15
+    const contentW = pageW - marginL * 2
+    let y = 20
 
-    doc.setFontSize(20)
-    doc.text('Loom Video Tasks', 20, yPosition)
-    yPosition += 15
+    const checkY = (needed: number) => {
+      if (y + needed > 278) { doc.addPage(); y = 20 }
+    }
+
+    doc.setFontSize(22)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 30, 30)
+    doc.text('Loom Video – Extracted Tasks', marginL, y)
+    y += 10
+
+    if (summary) {
+      checkY(22)
+      doc.setFontSize(12)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(60, 80, 140)
+      doc.text('Summary', marginL, y)
+      y += 6
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(50, 50, 50)
+      doc.setFontSize(10)
+      const summaryLines = doc.splitTextToSize(summary, contentW)
+      doc.text(summaryLines, marginL, y)
+      y += summaryLines.length * 5 + 6
+      doc.setDrawColor(200, 200, 220)
+      doc.line(marginL, y, pageW - marginL, y)
+      y += 8
+    }
 
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i]
-      
-      // Check if we need a new page before adding content
-      if (yPosition > 220) {
-        doc.addPage()
-        yPosition = 20
-      }
 
-      // Task number and name
-      doc.setFontSize(14)
+      checkY(20)
+      doc.setFontSize(13)
       doc.setFont('helvetica', 'bold')
-      doc.text(`${i + 1}. ${task.task_name}`, 20, yPosition)
-      yPosition += 7
+      doc.setTextColor(20, 20, 20)
+      const titleLines = doc.splitTextToSize(`${i + 1}. ${task.task_name}`, contentW - 30)
+      doc.text(titleLines, marginL, y)
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(80, 100, 180)
+      doc.text(`⏱ ${task.timestamp_label}`, pageW - marginL, y, { align: 'right' })
+      y += titleLines.length * 6 + 2
 
-      // Timestamp
+      checkY(12)
       doc.setFontSize(10)
       doc.setFont('helvetica', 'normal')
-      doc.setTextColor(100, 100, 100)
-      doc.text(`⏱ ${task.timestamp_label}`, 20, yPosition)
-      yPosition += 7
+      doc.setTextColor(60, 60, 60)
+      const descLines = doc.splitTextToSize(task.task_description, contentW)
+      doc.text(descLines, marginL, y)
+      y += descLines.length * 5 + 4
 
-      // Description
-      doc.setTextColor(0, 0, 0)
-      doc.setFontSize(11)
-      const splitDescription = doc.splitTextToSize(task.task_description, 170)
-      doc.text(splitDescription, 20, yPosition)
-      yPosition += splitDescription.length * 5 + 5
-
-      // Add images to PDF
-      const screenshotsToExport = task.screenshots && task.screenshots.length > 0
+      const shots = task.screenshots?.length
         ? task.screenshots
-        : (task.image_url || task.image_base64)
-          ? [{ 
-              image_url: task.image_url,
-              image_base64: task.image_base64,
-              timestamp_label: task.timestamp_label,
-              timestamp_seconds: task.timestamp_seconds
-            }]
+        : (task.image_base64 || task.image_url)
+          ? [{ image_url: task.image_url || '', image_base64: task.image_base64, timestamp_label: task.timestamp_label, timestamp_seconds: task.timestamp_seconds }]
           : []
 
-      if (screenshotsToExport.length > 0) {
-        for (let s = 0; s < screenshotsToExport.length; s++) {
-          const screenshot = screenshotsToExport[s]
-          const imageSource = screenshot.image_base64 || screenshot.image_url
-          
-          if (!imageSource) continue
+      if (shots.length > 0) {
+        const imgW = contentW
+        const imgH = Math.round(imgW * 9 / 16)
+
+        for (let s = 0; s < shots.length; s++) {
+          const shot = shots[s]
+          const imgSrc = shot.image_base64 || shot.image_url
+          if (!imgSrc) continue
+
+          checkY(imgH + 14)
+
+          if (shots.length > 1) {
+            doc.setFontSize(8)
+            doc.setTextColor(120, 120, 120)
+            doc.text(`Screenshot ${s + 1}/${shots.length} — ${shot.timestamp_label}`, marginL, y)
+            y += 4
+          }
 
           try {
-            // Check if we need a new page for the image
-            if (yPosition > 180) {
-              doc.addPage()
-              yPosition = 20
+            let base64Data: string | null = null
+            if (imgSrc.startsWith('data:')) {
+              base64Data = imgSrc
+            } else {
+              try {
+                const resp = await fetch(imgSrc)
+                const blob = await resp.blob()
+                base64Data = await new Promise<string>(resolve => {
+                  const reader = new FileReader()
+                  reader.onload = () => resolve(reader.result as string)
+                  reader.readAsDataURL(blob)
+                })
+              } catch {
+                base64Data = null
+              }
             }
-
-            // Get base64: use existing if available, otherwise fetch and convert
-            const base64 = screenshot.image_base64 || await imageUrlToBase64(imageSource)
-
-            // Add image to PDF (scaled to fit width of 170)
-            const imgWidth = 170
-            const imgHeight = 95 // 16:9 aspect ratio
-            
-            // Add screenshot label if multiple
-            if (screenshotsToExport.length > 1) {
-              doc.setFontSize(9)
-              doc.setTextColor(100, 100, 100)
-              doc.text(`Screenshot ${s + 1}/${screenshotsToExport.length} at ${screenshot.timestamp_label}`, 20, yPosition)
-              yPosition += 4
-            }
-            
-            // Add the image with a clickable link overlay
-            doc.addImage(base64, 'JPEG', 20, yPosition, imgWidth, imgHeight)
-            
-            // Add clickable transparent rectangle over the image
-            const screenshotLoomUrl = screenshot.timestamp_seconds 
-              ? generateLoomUrlWithTimestamp(videoId, screenshot.timestamp_seconds)
+            if (!base64Data) throw new Error('No image data')
+            doc.addImage(base64Data, 'JPEG', marginL, y, imgW, imgH)
+            const loomUrl = shot.timestamp_seconds
+              ? generateLoomUrlWithTimestamp(videoId, shot.timestamp_seconds)
               : task.loom_url
-            doc.link(20, yPosition, imgWidth, imgHeight, { url: screenshotLoomUrl })
-            
-            yPosition += imgHeight + 3
-            
-            // Add clickable text link below image
-            doc.setFontSize(9)
-            doc.setTextColor(0, 0, 255)
-            const linkText = screenshotsToExport.length > 1 
-              ? `🔗 View screenshot ${s + 1} in Loom`
-              : '🔗 Click image or this link to view in Loom'
-            doc.textWithLink(linkText, 20, yPosition, { url: screenshotLoomUrl })
-            yPosition += 5
-            
-            // Add direct Loom link as requested by boss
+            doc.link(marginL, y, imgW, imgH, { url: loomUrl })
+            y += imgH + 2
             doc.setFontSize(8)
-            doc.setTextColor(100, 100, 100)
-            doc.text(`Direct link: ${screenshotLoomUrl}`, 20, yPosition)
-            yPosition += 8
-          } catch (error) {
-            console.error('Error adding image to PDF:', error)
-            // Continue to next screenshot if one fails
+            doc.setTextColor(40, 80, 180)
+            doc.textWithLink('▶ View in Loom', marginL, y, { url: loomUrl })
+            y += 6
+          } catch {
+            doc.setFontSize(9)
+            doc.setTextColor(40, 80, 180)
+            doc.textWithLink('▶ View in Loom', marginL, y, { url: task.loom_url })
+            y += 6
           }
         }
       } else {
-        // No images available, add text link only
         doc.setFontSize(9)
-        doc.setTextColor(0, 0, 255)
-        doc.textWithLink('🔗 View in Loom', 20, yPosition, { url: task.loom_url })
-        yPosition += 10
+        doc.setTextColor(40, 80, 180)
+        doc.textWithLink('▶ View in Loom', marginL, y, { url: task.loom_url })
+        y += 6
       }
 
-      yPosition += 10
+      y += 4
+      doc.setDrawColor(220, 220, 220)
+      doc.line(marginL, y, pageW - marginL, y)
+      y += 6
     }
 
     doc.save('loom-tasks.pdf')
@@ -304,9 +289,10 @@ export default function Results() {
 
   if (tasks.length === 0) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
         <div className="text-center">
-          <p className="text-gray-600">Loading results...</p>
+          <div className="w-12 h-12 border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-gray-600 text-lg">Loading results...</p>
         </div>
       </div>
     )
@@ -315,212 +301,340 @@ export default function Results() {
   return (
     <div className="min-h-screen bg-gray-50 py-8 px-4 sm:px-6 lg:px-8">
       <div className="max-w-5xl mx-auto">
-        <div className="flex justify-between items-center mb-8">
+
+        {/* Header */}
+        <div className="flex flex-wrap justify-between items-start gap-4 mb-8">
           <div>
             <h1 className="text-4xl font-bold text-gray-900">Extracted Tasks</h1>
-            <p className="text-gray-600 mt-2">{tasks.length} task{tasks.length !== 1 ? 's' : ''} found</p>
+            <p className="text-gray-500 mt-1">{tasks.length} task{tasks.length !== 1 ? 's' : ''}</p>
           </div>
-          <div className="space-x-4">
+          <div className="flex flex-wrap gap-3">
+            {selectedIds.size > 0 && (
+              <>
+                <button
+                  onClick={toggleSelectAll}
+                  className="px-4 py-2 text-sm text-black font-semibold border-2 border-gray-300 bg-white hover:bg-gray-50 transition-colors"
+                >
+                  {selectedIds.size === tasks.length ? 'Deselect All' : 'Select All'}
+                </button>
+                <button
+                  onClick={deleteSelected}
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-semibold border-2 border-red-500 bg-red-500 text-white hover:bg-red-600 transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                  </svg>
+                  Delete ({selectedIds.size})
+                </button>
+                <button
+                  onClick={() => setSelectedIds(new Set())}
+                  className="px-4 py-2 text-sm text-black font-semibold border-2 border-gray-300 bg-white hover:bg-gray-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
             <button
               onClick={handleExportPDF}
-              className="bg-green-600 text-white px-6 py-3 font-semibold hover:bg-green-700 transition-colors border-2 border-green-700"
+              className="bg-green-600 text-white px-5 py-2 font-semibold hover:bg-green-700 transition-colors border-2 border-green-700"
             >
               📄 Export PDF
             </button>
             <button
               onClick={() => router.push('/')}
-              className="bg-gray-200 text-gray-700 px-6 py-3 font-semibold hover:bg-gray-300 transition-colors border-2 border-gray-300"
+              className="bg-gray-200 text-gray-700 px-5 py-2 font-semibold hover:bg-gray-300 transition-colors border-2 border-gray-300"
             >
               ← New Video
             </button>
           </div>
         </div>
 
-        <div className="space-y-6">
-          {tasks.map((task, index) => (
+        {/* Summary */}
+        {summary && (
+          <div className="bg-indigo-50 border-2 border-indigo-200 p-5 mb-6">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-lg font-bold text-indigo-800">📋 Video Summary</h2>
+              {!editingSummary && (
+                <button
+                  onClick={() => { setEditingSummary(true); setEditedSummary(summary) }}
+                  className="text-sm text-indigo-600 hover:text-indigo-800 font-semibold"
+                >
+                  ✏ Edit
+                </button>
+              )}
+            </div>
+            {editingSummary ? (
+              <div>
+                <textarea
+                  value={editedSummary}
+                  onChange={e => setEditedSummary(e.target.value)}
+                  className="w-full border-2 border-indigo-300 p-3 text-gray-800 text-sm resize-none focus:outline-none focus:border-indigo-500"
+                  rows={4}
+                  autoFocus
+                />
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={() => { setSummary(editedSummary.trim()); setEditingSummary(false) }}
+                    className="px-4 py-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700"
+                  >
+                    Save
+                  </button>
+                  <button
+                    onClick={() => setEditingSummary(false)}
+                    className="px-4 py-1.5 text-sm text-black font-semibold border border-gray-300 bg-white hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-700 leading-relaxed">{summary}</p>
+            )}
+          </div>
+        )}
+
+        {/* Task list */}
+        <div className="space-y-5">
+          {tasks.map((task, displayIndex) => (
             <div
-              key={index}
-              className="bg-white shadow-md overflow-hidden hover:shadow-xl transition-shadow border-2 border-gray-200"
+              key={task._id}
+              className={`bg-white shadow-md overflow-hidden transition-shadow border-2 ${
+                selectedIds.has(task._id)
+                  ? 'border-red-400 shadow-red-100 shadow-lg'
+                  : 'border-gray-200 hover:shadow-xl'
+              }`}
             >
               <div className="p-6">
-                <div className="flex items-start justify-between mb-4">
-                  <div className="flex-1">
-                    <h2 className="text-xl font-bold text-gray-900 mb-2">
-                      {index + 1}. {task.task_name} <span></span><span className="inline-block bg-indigo-100 text-indigo-800 text-lg font-semibold px-3 py-1 border-2 ml-[0.2rem] border-indigo-300">
-                      ⏱ {task.timestamp_label}
-                    </span>
-                    </h2>
-                    
+                <div className="flex items-start gap-3 mb-3">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(task._id)}
+                    onChange={() => toggleSelect(task._id)}
+                    className="mt-1.5 w-5 h-5 accent-red-500 cursor-pointer flex-shrink-0"
+                  />
+
+                  <div className="flex-1 min-w-0">
+                    {editingTaskId === task._id ? (
+                      <div className="space-y-3">
+                        <input
+                          type="text"
+                          value={editTitle}
+                          onChange={e => setEditTitle(e.target.value)}
+                          className="w-full border-2 border-indigo-400 px-3 py-2 text-lg font-bold text-gray-900 focus:outline-none focus:border-indigo-600"
+                          autoFocus
+                          onKeyDown={e => { if (e.key === 'Enter') saveEdit(task._id); if (e.key === 'Escape') setEditingTaskId(null) }}
+                        />
+                        <textarea
+                          value={editDescription}
+                          onChange={e => setEditDescription(e.target.value)}
+                          className="w-full border-2 border-indigo-300 px-3 py-2 text-gray-700 resize-none focus:outline-none focus:border-indigo-500"
+                          rows={3}
+                          onKeyDown={e => { if (e.key === 'Escape') setEditingTaskId(null) }}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => saveEdit(task._id)}
+                            className="px-4 py-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700"
+                          >
+                            ✓ Save
+                          </button>
+                          <button
+                            onClick={() => setEditingTaskId(null)}
+                            className="px-4 py-1.5 text-sm text-black font-semibold border border-gray-300 bg-white hover:bg-gray-50"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <h2 className="text-xl font-bold text-gray-900">
+                            {displayIndex + 1}. {task.task_name}
+                          </h2>
+                          <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border border-indigo-300">
+                            ⏱ {task.timestamp_label}
+                          </span>
+                        </div>
+                        <p className="text-gray-700 leading-relaxed">{task.task_description}</p>
+                      </>
+                    )}
                   </div>
+
+                  {editingTaskId !== task._id && (
+                    <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => startEdit(task)}
+                        title="Edit task"
+                        className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 border border-gray-200 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => deleteTask(task._id)}
+                        title="Delete task"
+                        className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-200 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
+                      </button>
+                    </div>
+                  )}
                 </div>
 
-                <p className="text-gray-700 mb-4 leading-relaxed">
-                  {task.task_description}
-                </p>
-
-                {/* Image Gallery - Show all screenshots if available */}
+                {/* Screenshots */}
                 {task.screenshots && task.screenshots.length > 0 ? (
-                  <div className="mb-4">
-                    <p className="text-sm font-semibold text-gray-600 mb-2">
+                  <div className="mt-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
                       Screenshots ({task.screenshots.length})
                     </p>
                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {task.screenshots.map((screenshot, screenshotIndex) => (
-                        <div key={screenshotIndex} className="border-2 border-gray-300 hover:border-indigo-500 transition-colors cursor-pointer group relative">
+                      {task.screenshots.map((screenshot, si) => (
+                        <div
+                          key={si}
+                          className="border-2 border-gray-200 hover:border-indigo-500 transition-colors cursor-pointer group relative overflow-hidden"
+                        >
                           <img
                             src={screenshot.image_base64 || screenshot.image_url}
                             alt={`Screenshot at ${screenshot.timestamp_label}`}
-                            className="w-full h-auto"
+                            className="w-full h-auto block"
                             onClick={() => {
                               setCurrentTaskScreenshots(task.screenshots || [])
-                              setLightboxIndex(screenshotIndex)
+                              setLightboxIndex(si)
                               setLightboxImage(screenshot.image_base64 || screenshot.image_url)
                               setLightboxTimestamp(screenshot.timestamp_label)
                             }}
-                            onError={(e) => {
-                              // Fallback: if image_url fails and we have base64, use it
+                            onError={e => {
                               if (screenshot.image_base64 && e.currentTarget.src !== screenshot.image_base64) {
                                 e.currentTarget.src = screenshot.image_base64
-                              } else {
-                                console.error(`Failed to load screenshot: ${screenshot.image_url}`)
                               }
                             }}
                           />
-                          {/* Permanent timestamp overlay - bottom left (clickable to go to Loom) */}
                           <a
-                            href={screenshot.timestamp_seconds 
+                            href={screenshot.timestamp_seconds
                               ? generateLoomUrlWithTimestamp(videoId, screenshot.timestamp_seconds)
                               : task.loom_url}
                             target="_blank"
                             rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className="absolute bottom-2 left-2 bg-black bg-opacity-80 hover:bg-opacity-95 text-white text-sm font-bold py-1 px-3 rounded border border-black shadow-lg transition-all z-10"
+                            onClick={e => e.stopPropagation()}
+                            className="absolute bottom-2 left-2 bg-black bg-opacity-75 hover:bg-opacity-90 text-white text-xs font-bold px-2 py-1 rounded shadow z-10"
                           >
                             ⏱ {screenshot.timestamp_label}
                           </a>
-                          {/* Hover overlay - centered */}
-                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 transition-all flex items-center justify-center pointer-events-none">
-                            <span className="text-white font-semibold opacity-0 group-hover:opacity-100 transition-opacity">
-                              🔍 Click to enlarge
+                          <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-25 transition-all flex items-center justify-center pointer-events-none">
+                            <span className="text-white font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity drop-shadow">
+                              🔍 Enlarge
                             </span>
                           </div>
                         </div>
                       ))}
                     </div>
                   </div>
-                ) : (task.image_base64 || task.image_url) && (
-                  /* Fallback to single image for backward compatibility */
-                  <a
-                  href={task.loom_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block font-semibold transition-colors justify-items-end   "
-                >
-                  <div className="mb-4 border-2 border-gray-300">
+                ) : (task.image_base64 || task.image_url) ? (
+                  <div className="mt-4 border-2 border-gray-200">
                     <img
                       src={task.image_base64 || task.image_url}
                       alt={`Screenshot at ${task.timestamp_label}`}
                       className="w-full h-auto"
-                      onError={(e) => {
-                        // Fallback: try base64 if URL fails
+                      onError={e => {
                         if (task.image_base64 && e.currentTarget.src !== task.image_base64) {
                           e.currentTarget.src = task.image_base64
-                        } else {
-                          console.error(`Failed to load image: ${task.image_url}`)
                         }
                       }}
                     />
                   </div>
-                  </a>
-                )}
+                ) : null}
 
-                <a
-                  href={task.loom_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block bg-indigo-600 text-white px-6 py-3 font-semibold hover:bg-indigo-700 transition-colors justify-items-end border-2 border-indigo-700"
-                >
-                  Watch in Loom
-                </a>
+                <div className="mt-4">
+                  <a
+                    href={task.loom_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-block bg-indigo-600 text-white px-5 py-2.5 font-semibold hover:bg-indigo-700 transition-colors border-2 border-indigo-700 text-sm"
+                  >
+                    Watch in Loom
+                  </a>
+                </div>
               </div>
             </div>
           ))}
         </div>
 
-        {/* Lightbox Modal for Full-Size Image Inspection with Navigation */}
-        {lightboxImage && (
-          <div 
-            className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4"
-            onClick={() => setLightboxImage(null)}
-          >
-            <div className="relative max-w-7xl w-full">
-              {/* Close button */}
-              <button
-                onClick={() => setLightboxImage(null)}
-                className="absolute top-3 right-4 text-gray-400 text-4xl font-bold hover:text-gray-300 z-10 rounded-full w-12 h-12 flex items-center justify-center"
-              >
-                ×
-              </button>
-
-              {/* Previous arrow - only show if multiple screenshots */}
-              {currentTaskScreenshots.length > 1 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const newIndex = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
-                    setLightboxIndex(newIndex)
-                    const screenshot = currentTaskScreenshots[newIndex]
-                    setLightboxImage(screenshot.image_base64 || screenshot.image_url)
-                    setLightboxTimestamp(screenshot.timestamp_label)
-                  }}
-                  className="absolute left-4 top-1/2 transform -translate-x-[5rem] -translate-y-1/2 text-gray text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
-                  aria-label="Previous image"
-                >
-                  ‹
-                </button>
-              )}
-
-              {/* Next arrow - only show if multiple screenshots */}
-              {currentTaskScreenshots.length > 1 && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    const newIndex = (lightboxIndex + 1) % currentTaskScreenshots.length
-                    setLightboxIndex(newIndex)
-                    const screenshot = currentTaskScreenshots[newIndex]
-                    setLightboxImage(screenshot.image_base64 || screenshot.image_url)
-                    setLightboxTimestamp(screenshot.timestamp_label)
-                  }}
-                  className="absolute right-4 top-1/2 transform translate-x-[5rem] -translate-y-1/2 text-gray text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
-                  aria-label="Next image"
-                >
-                  ›
-                </button>
-              )}
-
-              <div className="bg-white p-2 rounded-lg">
-                <img
-                  src={lightboxImage}
-                  alt={`Full size screenshot at ${lightboxTimestamp}`}
-                  className="w-full h-auto max-h-[90vh] object-contain"
-                  onClick={(e) => e.stopPropagation()}
-                />
-                <p className="text-center mt-2 text-gray-700 font-semibold">
-                  ⏱ {lightboxTimestamp}
-                  {currentTaskScreenshots.length > 1 && (
-                    <span className="ml-3 text-gray-500 text-sm">
-                      ({lightboxIndex + 1} of {currentTaskScreenshots.length})
-                    </span>
-                  )}
-                </p>
-              </div>
-              {/* <p className="text-white text-center mt-4 text-sm">
-                {currentTaskScreenshots.length > 1 ? 'Use arrow buttons or click outside to close' : 'Click outside image or X button to close'}
-              </p> */}
-            </div>
+        {tasks.length === 0 && (
+          <div className="text-center py-16 text-gray-400">
+            <p className="text-2xl mb-3">No tasks remaining</p>
+            <button onClick={() => router.push('/')} className="text-indigo-600 hover:underline font-semibold">
+              ← Process another video
+            </button>
           </div>
         )}
       </div>
+
+      {/* Lightbox */}
+      {lightboxImage && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-90 z-50 flex items-center justify-center p-4"
+          onClick={() => setLightboxImage(null)}
+        >
+          <div className="relative max-w-7xl w-full">
+            <button
+              onClick={() => setLightboxImage(null)}
+              className="absolute top-3 right-4 text-gray-300 text-4xl font-bold hover:text-white z-10 w-12 h-12 flex items-center justify-center"
+            >
+              ×
+            </button>
+
+            {currentTaskScreenshots.length > 1 && (
+              <>
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    const ni = (lightboxIndex - 1 + currentTaskScreenshots.length) % currentTaskScreenshots.length
+                    setLightboxIndex(ni)
+                    const s = currentTaskScreenshots[ni]
+                    setLightboxImage(s.image_base64 || s.image_url)
+                    setLightboxTimestamp(s.timestamp_label)
+                  }}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-white text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
+                >
+                  ‹
+                </button>
+                <button
+                  onClick={e => {
+                    e.stopPropagation()
+                    const ni = (lightboxIndex + 1) % currentTaskScreenshots.length
+                    setLightboxIndex(ni)
+                    const s = currentTaskScreenshots[ni]
+                    setLightboxImage(s.image_base64 || s.image_url)
+                    setLightboxTimestamp(s.timestamp_label)
+                  }}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-white text-5xl font-bold hover:text-gray-300 z-10 w-14 h-14 flex items-center justify-center"
+                >
+                  ›
+                </button>
+              </>
+            )}
+
+            <div className="bg-white p-2" onClick={e => e.stopPropagation()}>
+              <img
+                src={lightboxImage}
+                alt={`Screenshot at ${lightboxTimestamp}`}
+                className="w-full h-auto max-h-[85vh] object-contain"
+              />
+              <p className="text-center mt-2 text-gray-700 font-semibold text-sm py-1">
+                ⏱ {lightboxTimestamp}
+                {currentTaskScreenshots.length > 1 && (
+                  <span className="ml-2 text-gray-400">({lightboxIndex + 1}/{currentTaskScreenshots.length})</span>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

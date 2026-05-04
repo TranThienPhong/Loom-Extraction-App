@@ -95,6 +95,7 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
       
       await execAsync(command, {
         maxBuffer: 1024 * 1024 * 5, // 5MB buffer
+        timeout: 30000, // 30 second timeout per frame
       })
       
       // Verify file exists and has content

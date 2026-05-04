@@ -66,7 +66,8 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
     const command = `yt-dlp -f "best[ext=mp4]" -o "${outputPath}" "${loomUrl}"`
     
     const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+      maxBuffer: 1024 * 1024 * 100, // 100MB buffer
+      timeout: 600000, // 10 minute timeout
     })
 
     console.log('Download stdout:', stdout)
@@ -141,7 +142,8 @@ export async function downloadLoomSubtitles(loomUrl: string): Promise<string> {
     const command = `yt-dlp --write-subs --sub-format json --skip-download -o "${path.join(tempDir, videoId)}" "${loomUrl}"`
     
     const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+      maxBuffer: 1024 * 1024 * 10,
+      timeout: 60000, // 1 minute timeout
     })
 
     console.log('Subtitle download stdout:', stdout)
