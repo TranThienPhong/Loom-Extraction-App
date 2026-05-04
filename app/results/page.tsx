@@ -254,7 +254,24 @@ export default function Results() {
               }
             }
             if (!base64Data) throw new Error('No image data')
-            doc.addImage(base64Data, 'JPEG', marginL, y, imgW, imgH)
+
+            // Decode via canvas to avoid jsPDF format/EXIF corruption (noise artifact)
+            const pdfImgData: string = await new Promise((resolve, reject) => {
+              const img = new window.Image()
+              img.onload = () => {
+                const canvas = document.createElement('canvas')
+                const scale = 2 // 2× resolution for reasonable PDF quality
+                canvas.width = Math.round(imgW * scale * 3.7795)
+                canvas.height = Math.round(imgH * scale * 3.7795)
+                const ctx = canvas.getContext('2d')
+                if (!ctx) { reject(new Error('canvas context unavailable')); return }
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+                resolve(canvas.toDataURL('image/jpeg', 0.88))
+              }
+              img.onerror = () => reject(new Error('image load failed'))
+              img.src = base64Data!
+            })
+            doc.addImage(pdfImgData, 'JPEG', marginL, y, imgW, imgH)
             const loomUrl = shot.timestamp_seconds
               ? generateLoomUrlWithTimestamp(videoId, shot.timestamp_seconds)
               : task.loom_url
