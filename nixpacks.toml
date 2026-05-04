@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["nodejs", "npm", "ffmpeg", "curl"]
+nixPkgs = ["nodejs", "npm", "ffmpeg", "python3", "curl"]
 
 [phases.install]
 cmds = [
