@@ -157,61 +157,149 @@ export default function Results() {
     const { jsPDF } = await import('jspdf')
     const doc = new jsPDF({ unit: 'mm', format: 'a4' })
     const pageW = 210
-    const marginL = 15
-    const contentW = pageW - marginL * 2
-    let y = 20
+    const pageH = 297
+    const mL = 15   // left margin
+    const mR = 15   // right margin
+    const cW = pageW - mL - mR  // 180mm content width
 
-    const checkY = (needed: number) => {
-      if (y + needed > 278) { doc.addPage(); y = 20 }
+    // ── helpers ──────────────────────────────────────────────────────
+    const hr = (yPos: number, r = 180, g = 185, b = 230) => {
+      doc.setDrawColor(r, g, b)
+      doc.setLineWidth(0.2)
+      doc.line(mL, yPos, pageW - mR, yPos)
     }
 
-    doc.setFontSize(22)
+    const drawFooter = (taskNum: number, total: number, timestamp: string, url: string) => {
+      doc.setDrawColor(70, 90, 200)
+      doc.setLineWidth(0.4)
+      doc.line(mL, pageH - 13, pageW - mR, pageH - 13)
+      doc.setLineWidth(0.2)
+      doc.setFontSize(7)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(120, 130, 190)
+      const footerLeft = `Task ${taskNum} of ${total}  •  ${timestamp}`
+      doc.text(footerLeft, mL, pageH - 8)
+      doc.setTextColor(40, 80, 180)
+      doc.textWithLink(url, mL + doc.getTextWidth(footerLeft) + 4, pageH - 8, { url })
+    }
+
+    // ── COVER PAGE ───────────────────────────────────────────────────
+    let y = 35
+    doc.setFontSize(24)
     doc.setFont('helvetica', 'bold')
-    doc.setTextColor(30, 30, 30)
-    doc.text('Loom Video – Extracted Tasks', marginL, y)
+    doc.setTextColor(20, 30, 100)
+    doc.text('Loom Video', mL, y)
+    y += 9
+    doc.setFontSize(18)
+    doc.setTextColor(60, 75, 160)
+    doc.text('Extracted Tasks', mL, y)
+    y += 5
+    doc.setDrawColor(60, 90, 220)
+    doc.setLineWidth(0.8)
+    doc.line(mL, y, pageW - mR, y)
+    doc.setLineWidth(0.2)
     y += 10
 
     if (summary) {
-      checkY(22)
-      doc.setFontSize(12)
+      doc.setFontSize(11)
       doc.setFont('helvetica', 'bold')
-      doc.setTextColor(60, 80, 140)
-      doc.text('Summary', marginL, y)
+      doc.setTextColor(50, 70, 140)
+      doc.text('Summary', mL, y)
       y += 6
       doc.setFont('helvetica', 'normal')
-      doc.setTextColor(50, 50, 50)
       doc.setFontSize(10)
-      const summaryLines = doc.splitTextToSize(summary, contentW)
-      doc.text(summaryLines, marginL, y)
-      y += summaryLines.length * 5 + 6
-      doc.setDrawColor(200, 200, 220)
-      doc.line(marginL, y, pageW - marginL, y)
+      doc.setTextColor(40, 40, 40)
+      const summaryLines = doc.splitTextToSize(summary, cW)
+      doc.text(summaryLines, mL, y)
+      y += summaryLines.length * 5 + 8
+      hr(y)
       y += 8
     }
 
+    // Task index on cover
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(30, 30, 80)
+    doc.text(`${tasks.length} Tasks`, mL, y)
+    y += 7
+    for (let i = 0; i < tasks.length; i++) {
+      if (y > pageH - 25) break
+      const t = tasks[i]
+      const url = generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds)
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(20, 20, 60)
+      const numLabel = `${i + 1}.`
+      doc.text(numLabel, mL + 2, y)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(20, 20, 20)
+      const nameLabel = doc.splitTextToSize(t.task_name, cW - 40)
+      doc.text(nameLabel[0], mL + 10, y)
+      doc.setTextColor(40, 80, 180)
+      doc.textWithLink(t.timestamp_label, pageW - mR - doc.getTextWidth(t.timestamp_label), y, { url })
+      y += 6
+    }
+
+    // ── ONE PAGE PER TASK ────────────────────────────────────────────
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i]
+      doc.addPage()
+      y = 12
 
-      checkY(20)
+      const taskUrl = generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds)
+
+      // — Header band ──────────────────────────────────────────────
+      doc.setFillColor(235, 238, 255)
+      doc.rect(mL, y, cW, 22, 'F')
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(90, 100, 170)
+      doc.text(`TASK ${i + 1} OF ${tasks.length}`, mL + 3, y + 5)
       doc.setFontSize(13)
       doc.setFont('helvetica', 'bold')
-      doc.setTextColor(20, 20, 20)
-      const titleLines = doc.splitTextToSize(`${i + 1}. ${task.task_name}`, contentW - 30)
-      doc.text(titleLines, marginL, y)
+      doc.setTextColor(10, 15, 70)
+      const titleLines = doc.splitTextToSize(task.task_name, cW - 8)
+      doc.text(titleLines[0], mL + 3, y + 13)
+      if (titleLines[1]) doc.text(titleLines[1], mL + 3, y + 19)
+      y += 26
+
+      // — Timestamp + link ─────────────────────────────────────────
       doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(60, 60, 80)
+      doc.text('Timestamp:', mL, y)
       doc.setFont('helvetica', 'normal')
-      doc.setTextColor(80, 100, 180)
-      doc.text(`⏱ ${task.timestamp_label}`, pageW - marginL, y, { align: 'right' })
-      y += titleLines.length * 6 + 2
+      doc.setTextColor(20, 20, 20)
+      doc.text(task.timestamp_label, mL + 26, y)
+      y += 6
 
-      checkY(12)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(60, 60, 80)
+      doc.text('Loom Link:', mL, y)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(30, 70, 200)
+      // Print URL as plain visible text AND make it clickable
+      doc.textWithLink(taskUrl, mL + 26, y, { url: taskUrl })
+      y += 8
+      hr(y)
+      y += 6
+
+      // — Description ───────────────────────────────────────────────
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(60, 60, 80)
+      doc.text('Description:', mL, y)
+      y += 5
+      doc.setFont('helvetica', 'normal')
       doc.setFontSize(10)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(60, 60, 60)
-      const descLines = doc.splitTextToSize(task.task_description, contentW)
-      doc.text(descLines, marginL, y)
-      y += descLines.length * 5 + 4
+      doc.setTextColor(25, 25, 25)
+      const descLines = doc.splitTextToSize(task.task_description, cW)
+      doc.text(descLines, mL, y)
+      y += descLines.length * 5 + 8
+      hr(y)
+      y += 6
 
+      // — Screenshots ───────────────────────────────────────────────
       const shots = task.screenshots?.length
         ? task.screenshots
         : (task.image_base64 || task.image_url)
@@ -219,21 +307,49 @@ export default function Results() {
           : []
 
       if (shots.length > 0) {
-        const imgW = contentW
+        doc.setFontSize(9)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(60, 60, 80)
+        doc.text(`Screenshots (${shots.length})`, mL, y)
+        y += 6
+
+        const imgW = cW
         const imgH = Math.round(imgW * 9 / 16)
 
         for (let s = 0; s < shots.length; s++) {
           const shot = shots[s]
           const imgSrc = shot.image_base64 || shot.image_url
-          if (!imgSrc) continue
+          const shotUrl = shot.timestamp_seconds
+            ? generateLoomUrlWithTimestamp(videoId, shot.timestamp_seconds)
+            : taskUrl
 
-          checkY(imgH + 14)
-
-          if (shots.length > 1) {
+          // New page if image won't fit
+          if (y + imgH + 20 > pageH - 20) {
+            doc.addPage()
+            y = 12
             doc.setFontSize(8)
-            doc.setTextColor(120, 120, 120)
-            doc.text(`Screenshot ${s + 1}/${shots.length} — ${shot.timestamp_label}`, marginL, y)
-            y += 4
+            doc.setFont('helvetica', 'normal')
+            doc.setTextColor(110, 110, 160)
+            doc.text(`Task ${i + 1} continued — ${task.task_name}`, mL, y)
+            y += 8
+          }
+
+          // Shot label + timestamp
+          doc.setFontSize(8)
+          doc.setFont('helvetica', 'normal')
+          doc.setTextColor(90, 90, 110)
+          const shotLabel = shots.length > 1
+            ? `Screenshot ${s + 1} / ${shots.length}  —  ${shot.timestamp_label}`
+            : `Screenshot  —  ${shot.timestamp_label}`
+          doc.text(shotLabel, mL, y)
+          y += 4
+
+          if (!imgSrc) {
+            doc.setFontSize(9)
+            doc.setTextColor(30, 70, 200)
+            doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
+            y += 8
+            continue
           }
 
           try {
@@ -249,56 +365,53 @@ export default function Results() {
                   reader.onload = () => resolve(reader.result as string)
                   reader.readAsDataURL(blob)
                 })
-              } catch {
-                base64Data = null
-              }
+              } catch { base64Data = null }
             }
-            if (!base64Data) throw new Error('No image data')
+            if (!base64Data) throw new Error('no data')
 
-            // Decode via canvas to avoid jsPDF format/EXIF corruption (noise artifact)
-            const pdfImgData: string = await new Promise((resolve, reject) => {
+            // Decode via canvas to normalize EXIF/color (prevents noise artifact)
+            const pdfImg: string = await new Promise((resolve, reject) => {
               const img = new window.Image()
               img.onload = () => {
                 const canvas = document.createElement('canvas')
-                const scale = 2 // 2× resolution for reasonable PDF quality
+                const scale = 2
                 canvas.width = Math.round(imgW * scale * 3.7795)
                 canvas.height = Math.round(imgH * scale * 3.7795)
                 const ctx = canvas.getContext('2d')
-                if (!ctx) { reject(new Error('canvas context unavailable')); return }
+                if (!ctx) { reject(new Error('no ctx')); return }
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
                 resolve(canvas.toDataURL('image/jpeg', 0.88))
               }
-              img.onerror = () => reject(new Error('image load failed'))
+              img.onerror = () => reject(new Error('load failed'))
               img.src = base64Data!
             })
-            doc.addImage(pdfImgData, 'JPEG', marginL, y, imgW, imgH)
-            const loomUrl = shot.timestamp_seconds
-              ? generateLoomUrlWithTimestamp(videoId, shot.timestamp_seconds)
-              : task.loom_url
-            doc.link(marginL, y, imgW, imgH, { url: loomUrl })
-            y += imgH + 2
+
+            doc.addImage(pdfImg, 'JPEG', mL, y, imgW, imgH)
+            doc.link(mL, y, imgW, imgH, { url: shotUrl })
+            y += imgH + 3
+
+            // Timestamp URL as plain text + link below image
             doc.setFontSize(8)
-            doc.setTextColor(40, 80, 180)
-            doc.textWithLink('▶ View in Loom', marginL, y, { url: loomUrl })
-            y += 6
+            doc.setFont('helvetica', 'normal')
+            doc.setTextColor(30, 70, 200)
+            doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
+            y += 8
           } catch {
             doc.setFontSize(9)
-            doc.setTextColor(40, 80, 180)
-            doc.textWithLink('▶ View in Loom', marginL, y, { url: task.loom_url })
-            y += 6
+            doc.setTextColor(30, 70, 200)
+            doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
+            y += 8
           }
         }
       } else {
         doc.setFontSize(9)
-        doc.setTextColor(40, 80, 180)
-        doc.textWithLink('▶ View in Loom', marginL, y, { url: task.loom_url })
-        y += 6
+        doc.setTextColor(30, 70, 200)
+        doc.textWithLink(`▶ ${taskUrl}`, mL, y, { url: taskUrl })
+        y += 8
       }
 
-      y += 4
-      doc.setDrawColor(220, 220, 220)
-      doc.line(marginL, y, pageW - marginL, y)
-      y += 6
+      // Footer on every task page with full link
+      drawFooter(i + 1, tasks.length, task.timestamp_label, taskUrl)
     }
 
     doc.save('loom-tasks.pdf')
