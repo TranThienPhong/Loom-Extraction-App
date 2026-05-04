@@ -2,11 +2,17 @@ import { NextRequest, NextResponse } from 'next/server'
 import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
 import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
 import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
-import { analyzeTranscriptWithAI } from '@/lib/aiProviders'
+import { analyzeTranscriptWithAI, generateVideoSummary } from '@/lib/aiProviders'
 import * as path from 'path'
 import * as fs from 'fs'
 
-export const maxDuration = 300 // 5 minutes timeout for video processing
+export const maxDuration = 800 // ~13 minutes - supports long videos (30+ min)
+
+// Ensure runtime directories exist (Railway starts with empty ephemeral filesystem)
+;[
+  path.join(process.cwd(), 'temp'),
+  path.join(process.cwd(), 'public', 'temp', 'frames'),
+].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) })
 
 export async function POST(request: NextRequest) {
   let videoPath: string | null = null
@@ -74,9 +80,14 @@ export async function POST(request: NextRequest) {
 
     console.log(`Parsed ${transcript.length} transcript entries`)
 
-    // Step 3: Analyze transcript with AI
+    // Step 3: Analyze transcript with AI (tasks + summary in parallel)
     console.log('Step 3: Analyzing transcript with AI...')
-    const tasks = await analyzeTranscriptWithAI(transcript)
+    const [tasks, summary] = await Promise.all([
+      analyzeTranscriptWithAI(transcript),
+      generateVideoSummary(transcript),
+    ])
+
+    console.log(`AI summary: ${summary?.substring(0, 100)}...`)
 
     if (tasks.length === 0) {
       return NextResponse.json(
@@ -96,12 +107,12 @@ export async function POST(request: NextRequest) {
     }
     
     // Helper function to limit concurrency (prevent Railway resource exhaustion)
-    const processWithConcurrencyLimit = async <T, R>(
-      items: T[],
+    async function processWithConcurrencyLimit(
+      items: any[],
       limit: number,
-      fn: (item: T) => Promise<R>
-    ): Promise<R[]> => {
-      const results: R[] = []
+      fn: (item: any) => Promise<any>
+    ): Promise<any[]> {
+      const results: any[] = []
       for (let i = 0; i < items.length; i += limit) {
         const batch = items.slice(i, i + limit)
         const batchResults = await Promise.all(batch.map(fn))
@@ -109,9 +120,8 @@ export async function POST(request: NextRequest) {
       }
       return results
     }
-    
-    const tasksWithImages = await Promise.all(
-      tasks.map(async (task, index) => {
+
+    const processTaskItem = async ({ task, index }: { task: any; index: number }) => {
         try {
           console.log(`Processing task ${index + 1}/${tasks.length}: ${task.task_name}`)
           
@@ -148,11 +158,13 @@ export async function POST(request: NextRequest) {
                 )
                 const imageUrl = '/' + relativeFramePath.replace(/\\/g, '/')
                 
-                // For Railway/production: Create base64 fallback
+                // For Railway/production: Create base64 fallback then delete frame from disk
                 let base64Image = ''
                 try {
                   const imageBuffer = fs.readFileSync(framePath)
                   base64Image = `data:image/jpeg;base64,${imageBuffer.toString('base64')}`
+                  // Delete frame from disk — base64 is embedded in the response
+                  try { fs.unlinkSync(framePath) } catch {}
                 } catch (base64Error) {
                   console.error('  - ❌ Failed to create base64:', base64Error)
                 }
@@ -203,17 +215,25 @@ export async function POST(request: NextRequest) {
             loom_url: generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds),
           }
         }
-      })
+    }
+
+    const tasksWithImages = await processWithConcurrencyLimit(
+      tasks.map((task: any, index: number) => ({ task, index })),
+      3, // Process 3 tasks in parallel
+      processTaskItem
     )
 
     console.log('Processing complete!')
 
-    // Note: We keep the video file for potential re-processing
-    // You can implement cleanup logic based on your needs
+    // Clean up video from disk — base64 images are already embedded in the response
+    if (videoPath) {
+      cleanupVideo(videoPath)
+    }
 
     return NextResponse.json({
       success: true,
       videoId,
+      summary: summary || '',
       tasks: tasksWithImages,
       totalTasks: tasksWithImages.length,
     })

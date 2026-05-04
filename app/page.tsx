@@ -40,6 +40,7 @@ export default function Home() {
       
       if (response.ok) {
         console.log('[App] 📦 Received data with', data.tasks?.length, 'tasks')
+        console.log('[App] Summary:', data.summary?.substring(0, 80))
         
         // Log first task to verify base64 exists
         if (data.tasks && data.tasks.length > 0) {
