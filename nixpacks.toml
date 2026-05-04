@@ -1,14 +1,14 @@
 [phases.setup]
-nixPkgs = ["nodejs", "npm", "ffmpeg", "python3", "curl"]
+nixPkgs = ["nodejs_20", "ffmpeg", "python3", "yt-dlp"]
 
 [phases.install]
-cmds = [
-  "curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp",
-  "npm install"
-]
+cmds = ["npm ci"]
 
 [phases.build]
-cmds = ["npm run build"]
+cmds = [
+  "npm run build",
+  "mkdir -p temp public/temp/frames"
+]
 
 [start]
-cmd = "npm start"
+cmd = "sh -c 'node_modules/.bin/next start -p ${PORT:-3000}'"
