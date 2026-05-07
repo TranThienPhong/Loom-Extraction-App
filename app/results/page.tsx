@@ -517,15 +517,16 @@ export default function Results() {
       return n.toFixed(1)
     }
 
+    const nm = 'Not mentioned'
     const tableRows = tasks.map((t, i) => [
       `${i + 1}. ${t.task_name}`,
-      t.task_description,
-      t.project || '',
-      t.client || '',
-      t.area || '',
-      t.assignee || '',
+      t.task_description || nm,
+      t.project || nm,
+      t.client || nm,
+      t.area || nm,
+      t.assignee || nm,
       priorityLabel(t.priority),
-      t.complexity || 'MOD',
+      t.complexity || nm,
       t.task_type || 'Nice-to-have',
       generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds),
     ])
@@ -556,16 +557,25 @@ export default function Results() {
       columnStyles: {
         0: { cellWidth: 24 },
         1: { cellWidth: 36 },
-        2: { cellWidth: 14 },
-        3: { cellWidth: 14 },
-        4: { cellWidth: 14 },
-        5: { cellWidth: 14 },
-        6: { cellWidth: 10 },
+        2: { cellWidth: 16 },
+        3: { cellWidth: 16 },
+        4: { cellWidth: 16 },
+        5: { cellWidth: 16 },
+        6: { cellWidth: 12 },
         7: { cellWidth: 12 },
         8: { cellWidth: 18 },
-        9: { cellWidth: 20 },
+        9: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
       },
       margin: { left: mL, right: mR },
+      didDrawCell: (data: any) => {
+        // Add a clickable link over every URL cell (column 9, skip header row)
+        if (data.column.index === 9 && data.row.index >= 0 && data.row.section === 'body') {
+          const url = String(data.cell.raw || '')
+          if (url.startsWith('http')) {
+            doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url })
+          }
+        }
+      },
     })
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
