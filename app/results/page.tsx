@@ -535,6 +535,7 @@ export default function Results() {
       head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']],
       body: tableRows,
       theme: 'grid',
+      rowPageBreak: 'avoid',
       styles: {
         fontSize: 7,
         cellPadding: 2,
