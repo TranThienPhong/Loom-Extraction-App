@@ -12,6 +12,7 @@ export interface AIAnalysisResult {
   client?: string
   area?: string
   assignee?: string
+  task_type?: string
 }
 
 export interface TranscriptEntry {
@@ -214,6 +215,7 @@ Instructions:
 6. If mentioned in transcript, extract: project name, client name, area/job role, assignee
 7. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default 3.0 if not stated.
 8. Complexity: one of "SupC" (Super Complex), "COMP" (Complex), "MOD" (Moderate), "SIMP" (Simple)
+9. Task Type: "Need-to-have" if the speaker explicitly marks it as urgent, must-do today, blocking, or critical. "Nice-to-have" for everything else — including tasks that are not mentioned as urgent, low-priority suggestions, or improvements with no stated deadline.
 
 **CRITICAL**: Keep descriptions SHORT - Railway has limited resources. Focus on: what needs fixing, where it is, and why.
 
@@ -229,7 +231,8 @@ Return ONLY a JSON array with no additional text, explanation, or markdown forma
   "project": "<project name or empty string>",
   "client": "<client name or empty string>",
   "area": "<job role / area or empty string>",
-  "assignee": "<assignee name or empty string>"
+  "assignee": "<assignee name or empty string>",
+  "task_type": "<Need-to-have|Nice-to-have>"
 }
 
 Example:
@@ -245,7 +248,8 @@ Example:
     "project": "",
     "client": "",
     "area": "",
-    "assignee": ""
+    "assignee": "",
+    "task_type": "Nice-to-have"
   }
 ]
 

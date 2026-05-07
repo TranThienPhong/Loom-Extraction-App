@@ -31,6 +31,7 @@ interface Task {
   client?: string
   area?: string
   assignee?: string
+  task_type?: string
 }
 
 interface TranscriptLine {
@@ -525,12 +526,13 @@ export default function Results() {
       t.assignee || '',
       priorityLabel(t.priority),
       t.complexity || 'MOD',
+      t.task_type || 'Nice-to-have',
       generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds),
     ])
 
     autoTable(doc, {
       startY: y,
-      head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Explanation URL']],
+      head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']],
       body: tableRows,
       theme: 'grid',
       styles: {
@@ -551,15 +553,16 @@ export default function Results() {
         fillColor: [248, 249, 252] as [number, number, number],
       },
       columnStyles: {
-        0: { cellWidth: 32 },
-        1: { cellWidth: 40 },
-        2: { cellWidth: 16 },
-        3: { cellWidth: 16 },
-        4: { cellWidth: 16 },
-        5: { cellWidth: 16 },
-        6: { cellWidth: 12 },
-        7: { cellWidth: 14 },
-        8: { cellWidth: 'auto' as any },
+        0: { cellWidth: 24 },
+        1: { cellWidth: 36 },
+        2: { cellWidth: 14 },
+        3: { cellWidth: 14 },
+        4: { cellWidth: 14 },
+        5: { cellWidth: 14 },
+        6: { cellWidth: 10 },
+        7: { cellWidth: 12 },
+        8: { cellWidth: 18 },
+        9: { cellWidth: 20 },
       },
       margin: { left: mL, right: mR },
     })
