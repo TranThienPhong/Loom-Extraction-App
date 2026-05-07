@@ -62,13 +62,16 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
 
   try {
     // Download video using yt-dlp
-    // Format priority: mp4+m4a merged → best mp4 → best available → anything
-    // --merge-output-format mp4 ensures long DASH-streamed videos are properly muxed
+    // Format priority:
+    //   1. Direct HTTPS combined stream (fastest — no HLS segment overhead, e.g. Loom http-transcoded)
+    //   2. HLS video+audio merge at ≤720p
+    //   3. Any best format at ≤1080p
+    //   4. Absolute fallback
     console.log(`Downloading video: ${loomUrl}`)
     const command = [
       'yt-dlp',
       '--no-playlist',
-      '-f "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=720]+bestaudio/best[height<=720]/best"',
+      '-f "best[protocol=https][height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best"',
       '--merge-output-format mp4',
       `--output "${outputPath}"`,
       `"${loomUrl}"`,
