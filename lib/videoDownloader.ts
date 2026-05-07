@@ -62,8 +62,20 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
 
   try {
     // Download video using yt-dlp
+    // Format priority:
+    //   1. Direct HTTPS combined stream (fastest — no HLS segment overhead, e.g. Loom http-transcoded)
+    //   2. HLS video+audio merge at ≤720p
+    //   3. Any best format at ≤1080p
+    //   4. Absolute fallback
     console.log(`Downloading video: ${loomUrl}`)
-    const command = `yt-dlp -f "best[ext=mp4]" -o "${outputPath}" "${loomUrl}"`
+    const command = [
+      'yt-dlp',
+      '--no-playlist',
+      '-f "best[protocol=https][height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best"',
+      '--merge-output-format mp4',
+      `--output "${outputPath}"`,
+      `"${loomUrl}"`,
+    ].join(' ')
     
     const { stdout, stderr } = await execAsync(command, {
       maxBuffer: 1024 * 1024 * 100, // 100MB buffer
@@ -71,10 +83,22 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
     })
 
     console.log('Download stdout:', stdout)
-    if (stderr) console.error('Download stderr:', stderr)
+    if (stderr) console.log('Download stderr:', stderr)
 
+    // yt-dlp sometimes outputs as .mp4 even if the template says otherwise; scan for the file
     if (!fs.existsSync(outputPath)) {
-      throw new Error('Video file was not created')
+      // Look for any video file that yt-dlp may have named slightly differently
+      const tempDir = path.dirname(outputPath)
+      const altFiles = fs.readdirSync(tempDir).filter(f =>
+        f.startsWith(path.basename(outputPath, '.mp4')) && /\.(mp4|mkv|webm)$/.test(f)
+      )
+      if (altFiles.length > 0) {
+        const altPath = path.join(tempDir, altFiles[0])
+        console.log(`Video saved as alternate name, renaming: ${altPath} → ${outputPath}`)
+        fs.renameSync(altPath, outputPath)
+      } else {
+        throw new Error('Video file was not created')
+      }
     }
 
     console.log(`Video downloaded successfully to: ${outputPath}`)

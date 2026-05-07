@@ -25,12 +25,24 @@ interface Task {
   image_base64?: string
   screenshots?: Screenshot[]
   loom_url: string
+  priority?: number
+  complexity?: string
+  project?: string
+  client?: string
+  area?: string
+  assignee?: string
+}
+
+interface TranscriptLine {
+  t: string  // timestamp label
+  s: string  // spoken text
 }
 
 export default function Results() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [videoId, setVideoId] = useState('')
   const [summary, setSummary] = useState('')
+  const [transcript, setTranscript] = useState<TranscriptLine[]>([])
   const [editingSummary, setEditingSummary] = useState(false)
   const [editedSummary, setEditedSummary] = useState('')
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
@@ -72,6 +84,7 @@ export default function Results() {
       let loadedVideoId = ''
       let loadedSummary = ''
 
+      let sessionTranscript: TranscriptLine[] = []
       try {
         const raw = sessionStorage.getItem('loomResults')
         if (raw) {
@@ -80,10 +93,13 @@ export default function Results() {
             loadedTasks = data.tasks
             loadedVideoId = data.videoId || ''
             loadedSummary = data.summary || ''
+            if (data.transcript?.length) sessionTranscript = data.transcript
           }
         }
       } catch {}
 
+      // Always try IndexedDB — prefer it for images and as transcript fallback
+      let idbTranscript: TranscriptLine[] = []
       if (loadedTasks.length === 0 || !loadedTasks[0]?.screenshots?.[0]?.image_base64) {
         try {
           const idb = await getProcessingResults()
@@ -92,8 +108,19 @@ export default function Results() {
             loadedVideoId = idb.videoId || ''
             loadedSummary = (idb as any).summary || ''
           }
+          if ((idb as any)?.transcript?.length) idbTranscript = (idb as any).transcript
+        } catch {}
+      } else {
+        // Tasks came from sessionStorage — still check IDB for transcript
+        try {
+          const idb = await getProcessingResults()
+          if ((idb as any)?.transcript?.length) idbTranscript = (idb as any).transcript
         } catch {}
       }
+
+      // Use IDB transcript first, fall back to sessionStorage transcript
+      const resolvedTranscript = idbTranscript.length > 0 ? idbTranscript : sessionTranscript
+      if (resolvedTranscript.length > 0) setTranscript(resolvedTranscript)
 
       if (loadedTasks.length === 0) {
         alert('No results found. Please try processing the video again.')
@@ -155,35 +182,68 @@ export default function Results() {
 
   const handleExportPDF = async () => {
     const { jsPDF } = await import('jspdf')
+    const { default: autoTable } = await import('jspdf-autotable')
     const doc = new jsPDF({ unit: 'mm', format: 'a4' })
     const pageW = 210
     const pageH = 297
-    const mL = 15   // left margin
-    const mR = 15   // right margin
-    const cW = pageW - mL - mR  // 180mm content width
+    const mL = 15
+    const mR = 15
+    const cW = pageW - mL - mR
 
     // ── helpers ──────────────────────────────────────────────────────
-    const hr = (yPos: number, r = 180, g = 185, b = 230) => {
-      doc.setDrawColor(r, g, b)
+    const hr = (yPos: number) => {
+      doc.setDrawColor(200, 200, 210)
       doc.setLineWidth(0.2)
       doc.line(mL, yPos, pageW - mR, yPos)
     }
 
-    const drawFooter = (taskNum: number, total: number, timestamp: string, url: string) => {
-      doc.setDrawColor(70, 90, 200)
-      doc.setLineWidth(0.4)
+    const sectionHeader = (title: string, yPos: number) => {
+      doc.setFontSize(15)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(20, 30, 100)
+      doc.text(title, mL, yPos)
+      yPos += 4
+      doc.setDrawColor(60, 90, 220)
+      doc.setLineWidth(0.6)
+      doc.line(mL, yPos, pageW - mR, yPos)
+      doc.setLineWidth(0.2)
+      return yPos + 8
+    }
+
+    const drawFooter = (label: string, url: string) => {
+      doc.setDrawColor(130, 130, 140)
+      doc.setLineWidth(0.3)
       doc.line(mL, pageH - 13, pageW - mR, pageH - 13)
       doc.setLineWidth(0.2)
       doc.setFontSize(7)
       doc.setFont('helvetica', 'normal')
-      doc.setTextColor(120, 130, 190)
-      const footerLeft = `Task ${taskNum} of ${total}  •  ${timestamp}`
-      doc.text(footerLeft, mL, pageH - 8)
+      doc.setTextColor(110, 110, 120)
+      doc.text(label, mL, pageH - 8)
       doc.setTextColor(40, 80, 180)
-      doc.textWithLink(url, mL + doc.getTextWidth(footerLeft) + 4, pageH - 8, { url })
+      doc.textWithLink(url, pageW - mR, pageH - 8, { url, align: 'right' })
     }
 
-    // ── COVER PAGE ───────────────────────────────────────────────────
+    // Fallback: read transcript directly from sessionStorage if state is empty
+    let transcriptData = transcript
+    if (transcriptData.length === 0) {
+      try {
+        const raw = sessionStorage.getItem('loomResults')
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (parsed.transcript?.length) transcriptData = parsed.transcript
+        }
+      } catch {}
+    }
+
+    // Page-number tracking (filled during generation, used for TOC)
+    const taskPageNums: number[] = []
+    let transcriptStartPage = 0
+    let summaryStartPage = 0
+    let tableStartPage = 0
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PAGE 1 — COVER
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     let y = 35
     doc.setFontSize(24)
     doc.setFont('helvetica', 'bold')
@@ -198,30 +258,14 @@ export default function Results() {
     doc.setLineWidth(0.8)
     doc.line(mL, y, pageW - mR, y)
     doc.setLineWidth(0.2)
+    y += 12
+
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.setTextColor(60, 60, 80)
+    doc.text(`${tasks.length} tasks  •  see page 2 for Table of Contents`, mL, y)
     y += 10
 
-    if (summary) {
-      doc.setFontSize(11)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(50, 70, 140)
-      doc.text('Summary', mL, y)
-      y += 6
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(10)
-      doc.setTextColor(40, 40, 40)
-      const summaryLines = doc.splitTextToSize(summary, cW)
-      doc.text(summaryLines, mL, y)
-      y += summaryLines.length * 5 + 8
-      hr(y)
-      y += 8
-    }
-
-    // Task index on cover
-    doc.setFontSize(11)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(30, 30, 80)
-    doc.text(`${tasks.length} Tasks`, mL, y)
-    y += 7
     for (let i = 0; i < tasks.length; i++) {
       if (y > pageH - 25) break
       const t = tasks[i]
@@ -229,26 +273,34 @@ export default function Results() {
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(20, 20, 60)
-      const numLabel = `${i + 1}.`
-      doc.text(numLabel, mL + 2, y)
+      doc.text(`${i + 1}.`, mL + 2, y)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(20, 20, 20)
-      const nameLabel = doc.splitTextToSize(t.task_name, cW - 40)
+      const nameLabel = doc.splitTextToSize(t.task_name, cW - 42)
       doc.text(nameLabel[0], mL + 10, y)
       doc.setTextColor(40, 80, 180)
       doc.textWithLink(t.timestamp_label, pageW - mR - doc.getTextWidth(t.timestamp_label), y, { url })
       y += 6
     }
 
-    // ── ONE PAGE PER TASK ────────────────────────────────────────────
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PAGE 2 — TABLE OF CONTENTS (blank — we come back to fill it)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    doc.addPage()
+    const tocPageNum = doc.getNumberOfPages()  // always 2
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // PAGES 3+ — ONE PAGE PER TASK
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     for (let i = 0; i < tasks.length; i++) {
       const task = tasks[i]
       doc.addPage()
+      taskPageNums[i] = doc.getNumberOfPages()
       y = 12
 
       const taskUrl = generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds)
 
-      // — Header band ──────────────────────────────────────────────
+      // Header band
       doc.setFillColor(235, 238, 255)
       doc.rect(mL, y, cW, 22, 'F')
       doc.setFontSize(8)
@@ -263,7 +315,7 @@ export default function Results() {
       if (titleLines[1]) doc.text(titleLines[1], mL + 3, y + 19)
       y += 26
 
-      // — Timestamp + link ─────────────────────────────────────────
+      // Timestamp + Loom link
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(60, 60, 80)
@@ -278,13 +330,11 @@ export default function Results() {
       doc.text('Loom Link:', mL, y)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(30, 70, 200)
-      // Print URL as plain visible text AND make it clickable
       doc.textWithLink(taskUrl, mL + 26, y, { url: taskUrl })
       y += 8
-      hr(y)
-      y += 6
+      hr(y); y += 6
 
-      // — Description ───────────────────────────────────────────────
+      // Description
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(60, 60, 80)
@@ -296,10 +346,9 @@ export default function Results() {
       const descLines = doc.splitTextToSize(task.task_description, cW)
       doc.text(descLines, mL, y)
       y += descLines.length * 5 + 8
-      hr(y)
-      y += 6
+      hr(y); y += 6
 
-      // — Screenshots ───────────────────────────────────────────────
+      // Screenshots
       const shots = task.screenshots?.length
         ? task.screenshots
         : (task.image_base64 || task.image_url)
@@ -323,7 +372,6 @@ export default function Results() {
             ? generateLoomUrlWithTimestamp(videoId, shot.timestamp_seconds)
             : taskUrl
 
-          // New page if image won't fit
           if (y + imgH + 20 > pageH - 20) {
             doc.addPage()
             y = 12
@@ -334,7 +382,6 @@ export default function Results() {
             y += 8
           }
 
-          // Shot label + timestamp
           doc.setFontSize(8)
           doc.setFont('helvetica', 'normal')
           doc.setTextColor(90, 90, 110)
@@ -369,7 +416,6 @@ export default function Results() {
             }
             if (!base64Data) throw new Error('no data')
 
-            // Decode via canvas to normalize EXIF/color (prevents noise artifact)
             const pdfImg: string = await new Promise((resolve, reject) => {
               const img = new window.Image()
               img.onload = () => {
@@ -389,8 +435,6 @@ export default function Results() {
             doc.addImage(pdfImg, 'JPEG', mL, y, imgW, imgH)
             doc.link(mL, y, imgW, imgH, { url: shotUrl })
             y += imgH + 3
-
-            // Timestamp URL as plain text + link below image
             doc.setFontSize(8)
             doc.setFont('helvetica', 'normal')
             doc.setTextColor(30, 70, 200)
@@ -410,9 +454,194 @@ export default function Results() {
         y += 8
       }
 
-      // Footer on every task page with full link
-      drawFooter(i + 1, tasks.length, task.timestamp_label, taskUrl)
+      drawFooter(`Task ${i + 1} of ${tasks.length}  •  ${task.timestamp_label}`, taskUrl)
     }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // TRANSCRIPT SECTION
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (transcriptData.length > 0) {
+      doc.addPage()
+      transcriptStartPage = doc.getNumberOfPages()
+      y = sectionHeader('Full Transcript', 20)
+
+      for (const line of transcriptData) {
+        if (y > pageH - 20) {
+          doc.addPage()
+          y = 20
+          doc.setFontSize(8)
+          doc.setFont('helvetica', 'italic')
+          doc.setTextColor(130, 130, 150)
+          doc.text('Transcript (continued)', mL, y)
+          y += 7
+        }
+
+        doc.setFontSize(8)
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(50, 70, 160)
+        doc.text(`[${line.t}]`, mL, y)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(20, 20, 20)
+        const lineText = doc.splitTextToSize(line.s, cW - 22)
+        doc.text(lineText, mL + 20, y)
+        y += lineText.length * 4.5 + 1.5
+      }
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // SUMMARY PAGE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    if (summary) {
+      doc.addPage()
+      summaryStartPage = doc.getNumberOfPages()
+      y = sectionHeader('Video Summary', 20)
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(25, 25, 25)
+      const summaryLines = doc.splitTextToSize(summary, cW)
+      doc.text(summaryLines, mL, y)
+    }
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // TASK SUMMARY TABLE
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    doc.addPage()
+    tableStartPage = doc.getNumberOfPages()
+    y = sectionHeader('Task Summary Table', 20)
+
+    const priorityLabel = (p: number | undefined) => {
+      if (p === undefined || p === null) return '3.0'
+      const n = Number(p)
+      if (isNaN(n)) return '3.0'
+      return n.toFixed(1)
+    }
+
+    const tableRows = tasks.map((t, i) => [
+      `${i + 1}. ${t.task_name}`,
+      t.task_description,
+      t.project || '',
+      t.client || '',
+      t.area || '',
+      t.assignee || '',
+      priorityLabel(t.priority),
+      t.complexity || 'MOD',
+      generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds),
+    ])
+
+    autoTable(doc, {
+      startY: y,
+      head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Explanation URL']],
+      body: tableRows,
+      theme: 'grid',
+      styles: {
+        fontSize: 7,
+        cellPadding: 2,
+        textColor: [20, 20, 20] as [number, number, number],
+        lineColor: [180, 180, 190] as [number, number, number],
+        lineWidth: 0.2,
+        overflow: 'linebreak',
+      },
+      headStyles: {
+        fillColor: [230, 232, 240] as [number, number, number],
+        textColor: [20, 20, 60] as [number, number, number],
+        fontStyle: 'bold',
+        fontSize: 7,
+      },
+      alternateRowStyles: {
+        fillColor: [248, 249, 252] as [number, number, number],
+      },
+      columnStyles: {
+        0: { cellWidth: 32 },
+        1: { cellWidth: 40 },
+        2: { cellWidth: 16 },
+        3: { cellWidth: 16 },
+        4: { cellWidth: 16 },
+        5: { cellWidth: 16 },
+        6: { cellWidth: 12 },
+        7: { cellWidth: 14 },
+        8: { cellWidth: 'auto' as any },
+      },
+      margin: { left: mL, right: mR },
+    })
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    // GO BACK TO PAGE 2 — FILL TABLE OF CONTENTS WITH PAGE LINKS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    doc.setPage(tocPageNum)
+    y = 20
+    doc.setFontSize(15)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(20, 30, 100)
+    doc.text('Table of Contents', mL, y)
+    y += 4
+    doc.setDrawColor(60, 90, 220)
+    doc.setLineWidth(0.6)
+    doc.line(mL, y, pageW - mR, y)
+    doc.setLineWidth(0.2)
+    y += 10
+
+    // Helper: draw one TOC row with a dotted leader and page link
+    const tocRow = (label: string, pageNum: number, indent = 0, bold = false) => {
+      const labelX = mL + indent
+      const pageStr = `${pageNum}`
+      const pageX = pageW - mR - doc.getTextWidth(pageStr) - 1
+
+      doc.setFont('helvetica', bold ? 'bold' : 'normal')
+      doc.setFontSize(bold ? 10 : 9)
+      doc.setTextColor(20, 20, 20)
+
+      // Clip label so it doesn't overlap dots
+      const labelLines = doc.splitTextToSize(label, pageX - labelX - 6)
+      doc.text(labelLines[0], labelX, y)
+
+      // Dotted leader
+      const labelEnd = labelX + doc.getTextWidth(labelLines[0])
+      doc.setFontSize(9)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(160, 160, 170)
+      let dotX = labelEnd + 2
+      while (dotX < pageX - 4) { doc.text('.', dotX, y); dotX += 2.5 }
+
+      // Page number
+      doc.setTextColor(20, 20, 20)
+      doc.setFontSize(9)
+      doc.text(pageStr, pageX, y)
+
+      // Invisible link over the whole row
+      doc.link(mL, y - 5, cW, 7, { pageNumber: pageNum })
+
+      y += bold ? 8 : 6
+    }
+
+    // Section: Tasks
+    doc.setFontSize(8)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(50, 70, 160)
+    doc.text('TASKS', mL, y)
+    y += 5
+
+    for (let i = 0; i < tasks.length; i++) {
+      tocRow(`${i + 1}.  ${tasks[i].task_name}`, taskPageNums[i], 2)
+    }
+    y += 4
+
+    // Section: Transcript
+    if (transcriptStartPage > 0) {
+      doc.setFontSize(8)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(50, 70, 160)
+      doc.text('APPENDIX', mL, y)
+      y += 5
+      tocRow('Full Transcript', transcriptStartPage, 2, true)
+    }
+
+    // Section: Summary
+    if (summaryStartPage > 0) {
+      tocRow('Video Summary', summaryStartPage, 2, true)
+    }
+
+    // Section: Table
+    tocRow('Task Summary Table', tableStartPage, 2, true)
 
     doc.save('loom-tasks.pdf')
   }
