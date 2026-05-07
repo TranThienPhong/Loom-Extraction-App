@@ -564,9 +564,18 @@ export default function Results() {
         6: { cellWidth: 10 },
         7: { cellWidth: 12 },
         8: { cellWidth: 18 },
-        9: { cellWidth: 20 },
+        9: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
       },
       margin: { left: mL, right: mR },
+      didDrawCell: (data: any) => {
+        // Add a clickable link over every URL cell (column 9, skip header row)
+        if (data.column.index === 9 && data.row.index >= 0 && data.row.section === 'body') {
+          const url = String(data.cell.raw || '')
+          if (url.startsWith('http')) {
+            doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url })
+          }
+        }
+      },
     })
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
