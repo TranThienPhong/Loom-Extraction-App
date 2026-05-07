@@ -5,7 +5,13 @@ export interface AIAnalysisResult {
   timestamp_label: string
   task_name: string
   task_description: string
-  screenshot_timestamps?: number[] // Multiple screenshot moments (before/during/after actions)
+  screenshot_timestamps?: number[]
+  priority?: number
+  complexity?: string
+  project?: string
+  client?: string
+  area?: string
+  assignee?: string
 }
 
 export interface TranscriptEntry {
@@ -205,6 +211,9 @@ Instructions:
    - For complex interactions, capture 2-3 moments (before/during/after)
 4. Create a clear, actionable task name (5-10 words)
 5. Write a CONCISE task description (2-3 sentences max, ~50 words) with key context only
+6. If mentioned in transcript, extract: project name, client name, area/job role, assignee
+7. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default 3.0 if not stated.
+8. Complexity: one of "SupC" (Super Complex), "COMP" (Complex), "MOD" (Moderate), "SIMP" (Simple)
 
 **CRITICAL**: Keep descriptions SHORT - Railway has limited resources. Focus on: what needs fixing, where it is, and why.
 
@@ -213,29 +222,34 @@ Return ONLY a JSON array with no additional text, explanation, or markdown forma
   "timestamp_seconds": <number>,
   "timestamp_label": "<M:SS format>",
   "task_name": "<short descriptive title>",
-  "task_description": "<detailed description with all context>",
-  "screenshot_timestamps": [<array of 1-3 timestamp numbers in seconds for key visual moments>]
+  "task_description": "<concise description>",
+  "screenshot_timestamps": [<array of 1-3 timestamp numbers in seconds>],
+  "priority": <number e.g. 3.0>,
+  "complexity": "<SupC|COMP|MOD|SIMP>",
+  "project": "<project name or empty string>",
+  "client": "<client name or empty string>",
+  "area": "<job role / area or empty string>",
+  "assignee": "<assignee name or empty string>"
 }
 
-Example output format:
+Example:
 [
   {
     "timestamp_seconds": 44,
     "timestamp_label": "0:44",
     "task_name": "Fix header alignment on mobile",
     "task_description": "Header navigation shifted left ~10px on mobile. Visible on home page iPhone view.",
-    "screenshot_timestamps": [44, 46]
-  },
-  {
-    "timestamp_seconds": 120,
-    "timestamp_label": "2:00",
-    "task_name": "Button click shows error popup",
-    "task_description": "Submit button shows 'Invalid data' error. Add validation before submission.",
-    "screenshot_timestamps": [119, 121, 123]
+    "screenshot_timestamps": [44, 46],
+    "priority": 3.0,
+    "complexity": "SIMP",
+    "project": "",
+    "client": "",
+    "area": "",
+    "assignee": ""
   }
 ]
 
-**IMPORTANT**: Keep ALL descriptions under 50 words. Be concise - remove unnecessary details.
+**IMPORTANT**: Keep ALL descriptions under 50 words.
 
 Return the JSON array now:`
 }

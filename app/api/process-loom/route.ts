@@ -219,7 +219,7 @@ export async function POST(request: NextRequest) {
 
     const tasksWithImages = await processWithConcurrencyLimit(
       tasks.map((task: any, index: number) => ({ task, index })),
-      3, // Process 3 tasks in parallel
+      1, // Process 1 task at a time — prevents OOM on Railway for long/large videos
       processTaskItem
     )
 
@@ -236,6 +236,7 @@ export async function POST(request: NextRequest) {
       summary: summary || '',
       tasks: tasksWithImages,
       totalTasks: tasksWithImages.length,
+      transcript: transcript.map((e: any) => ({ t: e.timestamp_label, s: e.text })),
     })
   } catch (error: any) {
     console.error('Error processing Loom video:', error)

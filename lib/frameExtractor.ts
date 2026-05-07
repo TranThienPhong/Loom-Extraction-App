@@ -84,19 +84,19 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // Extract frame using ffmpeg (simple extraction without overlay)
-      // -ss: seek to timestamp
-      // -i: input file
-      // -vframes 1: extract one frame
-      // -q:v 2: high quality (1-31, lower is better)
-      // Note: Timestamps are added via CSS overlays on the frontend
+      // Extract frame using ffmpeg
+      // -y: overwrite output without prompting (prevents hang)
+      // -ss BEFORE -i: fast input seek (keyframe-accurate, no full decode needed)
+      // -loglevel error: suppress info/warnings so stderr doesn't flood buffer
+      const command = `ffmpeg -y -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 -loglevel error "${framePath}"`
       
-      const command = `ffmpeg -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 "${framePath}"`
-      
-      await execAsync(command, {
-        maxBuffer: 1024 * 1024 * 5, // 5MB buffer
-        timeout: 30000, // 30 second timeout per frame
+      const { stderr } = await execAsync(command, {
+        maxBuffer: 1024 * 1024 * 10, // 10MB buffer
+        timeout: 90000, // 90 second timeout — long videos need more time
       })
+      if (stderr && stderr.trim()) {
+        console.warn(`  ffmpeg stderr at ${timestampSeconds}s:`, stderr.trim().substring(0, 200))
+      }
       
       // Verify file exists and has content
       const stats = fs.statSync(framePath)
