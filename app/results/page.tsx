@@ -517,15 +517,16 @@ export default function Results() {
       return n.toFixed(1)
     }
 
+    const nm = 'Not mentioned'
     const tableRows = tasks.map((t, i) => [
       `${i + 1}. ${t.task_name}`,
-      t.task_description,
-      t.project || '',
-      t.client || '',
-      t.area || '',
-      t.assignee || '',
+      t.task_description || nm,
+      t.project || nm,
+      t.client || nm,
+      t.area || nm,
+      t.assignee || nm,
       priorityLabel(t.priority),
-      t.complexity || 'MOD',
+      t.complexity || nm,
       t.task_type || 'Nice-to-have',
       generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds),
     ])
