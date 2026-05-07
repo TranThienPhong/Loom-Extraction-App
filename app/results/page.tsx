@@ -31,6 +31,7 @@ interface Task {
   client?: string
   area?: string
   assignee?: string
+  task_type?: string
 }
 
 interface TranscriptLine {
@@ -525,12 +526,13 @@ export default function Results() {
       t.assignee || '',
       priorityLabel(t.priority),
       t.complexity || 'MOD',
+      t.task_type || 'Nice-to-have',
       generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds),
     ])
 
     autoTable(doc, {
       startY: y,
-      head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Explanation URL']],
+      head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']],
       body: tableRows,
       theme: 'grid',
       styles: {
@@ -559,7 +561,8 @@ export default function Results() {
         5: { cellWidth: 16 },
         6: { cellWidth: 12 },
         7: { cellWidth: 14 },
-        8: { cellWidth: 'auto' as any },
+        8: { cellWidth: 20 },
+        9: { cellWidth: 'auto' as any },
       },
       margin: { left: mL, right: mR },
     })
