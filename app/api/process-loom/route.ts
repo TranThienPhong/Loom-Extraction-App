@@ -3,6 +3,7 @@ import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/vi
 import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
 import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptWithAI, generateVideoSummary } from '@/lib/aiProviders'
+import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -80,10 +81,12 @@ export async function POST(request: NextRequest) {
 
     console.log(`Parsed ${transcript.length} transcript entries`)
 
-    // Step 3: Analyze transcript with AI (tasks + summary in parallel)
+    // Step 3: Analyze transcript with AI (tasks + summary + DB context in parallel)
     console.log('Step 3: Analyzing transcript with AI...')
+    const dbCtx = await getDBContext()
+    const dbContextString = formatDBContextForPrompt(dbCtx)
     const [tasks, summary] = await Promise.all([
-      analyzeTranscriptWithAI(transcript),
+      analyzeTranscriptWithAI(transcript, dbContextString),
       generateVideoSummary(transcript),
     ])
 
