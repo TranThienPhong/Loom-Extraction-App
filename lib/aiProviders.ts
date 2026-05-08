@@ -42,21 +42,39 @@ export async function analyzeWithClaude(transcript: TranscriptEntry[], dbContext
 
   const prompt = buildAnalysisPrompt(transcriptText, dbContext)
 
-  try {
-    console.log('Using Anthropic Claude for AI analysis...')
-    
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 16384, // Increased from 4096 to handle long videos with many tasks
-      messages: [{ role: 'user', content: prompt }],
-    })
+  const MAX_RETRIES = 4
+  const RETRY_DELAY_MS = [5000, 10000, 20000, 30000]
 
-    const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
-    return parseAIResponse(responseText)
-  } catch (error: any) {
-    console.error('Claude API error:', error.message)
-    throw new Error(`Claude API failed: ${error.message}`)
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`Using Anthropic Claude for AI analysis... (attempt ${attempt}/${MAX_RETRIES})`)
+
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16384,
+        messages: [{ role: 'user', content: prompt }],
+      })
+
+      const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
+      return parseAIResponse(responseText)
+    } catch (error: any) {
+      const isOverloaded = error.status === 529 || (typeof error.message === 'string' && error.message.includes('overloaded'))
+      const isRateLimit = error.status === 429 || (typeof error.message === 'string' && error.message.includes('rate_limit'))
+      const shouldRetry = (isOverloaded || isRateLimit) && attempt < MAX_RETRIES
+
+      if (shouldRetry) {
+        const delay = RETRY_DELAY_MS[attempt - 1]
+        console.warn(`Claude overloaded/rate-limited (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay / 1000}s...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+        continue
+      }
+
+      console.error('Claude API error:', error.message)
+      throw new Error(`Claude API failed: ${error.message}`)
+    }
   }
+
+  throw new Error('Claude API failed after all retries')
 }
 
 // OpenAI GPT-4 provider
