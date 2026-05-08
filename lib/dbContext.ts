@@ -1,7 +1,10 @@
 /**
- * Fetches reference data from the Supabase database so the AI prompt
- * can match project/client/area/assignee names to real records.
+ * Fetches reference names from the Supabase database so the AI prompt
+ * can match project/client/area/assignee to real records.
+ * Fetched as the FIRST step of processing, before transcript analysis.
  */
+
+import { Pool } from 'pg'
 
 export interface DBContext {
   clients: string[]
@@ -14,67 +17,71 @@ let cached: DBContext | null = null
 let cacheTime = 0
 const CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
-export async function getDBContext(): Promise<DBContext> {
-  if (cached && Date.now() - cacheTime < CACHE_TTL) return cached
+let pool: Pool | null = null
 
-  const connectionString = process.env.DATABASE_URL
-  if (!connectionString) {
+function getPool(): Pool {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+      max: 2,
+      idleTimeoutMillis: 10000,
+      connectionTimeoutMillis: 5000,
+    })
+  }
+  return pool
+}
+
+export async function getDBContext(): Promise<DBContext> {
+  if (cached && Date.now() - cacheTime < CACHE_TTL) {
+    console.log('[DB] Using cached context')
+    return cached
+  }
+
+  if (!process.env.DATABASE_URL) {
     console.warn('[DB] DATABASE_URL not set — skipping DB context')
     return { clients: [], projects: [], areas: [], users: [] }
   }
 
   try {
-    // Dynamic import so pg is only loaded server-side
-    const { Pool } = await import('pg')
-    const pool = new Pool({
-      connectionString,
-      ssl: { rejectUnauthorized: false },
-      max: 2,
-      idleTimeoutMillis: 10000,
-      connectionTimeoutMillis: 8000,
-    })
+    const db = getPool()
 
     const [clientsRes, projectsRes, areasRes, usersRes] = await Promise.all([
-      pool.query<{ name: string }>(`SELECT name FROM "Client" WHERE active = true ORDER BY name`),
-      pool.query<{ name: string; client: string | null }>(`
+      db.query<{ name: string }>(`SELECT name FROM "Client" WHERE active = true ORDER BY name`),
+      db.query<{ name: string; client: string | null }>(`
         SELECT p.name, c.name AS client
         FROM "Project" p
         LEFT JOIN "Client" c ON c.id = p."clientId"
+        WHERE p.active = true AND p."deletedAt" IS NULL
         ORDER BY p.name
       `),
-      pool.query<{ name: string }>(`SELECT name FROM "Area" ORDER BY name`),
-      pool.query<{ name: string }>(`SELECT name FROM "User" ORDER BY name`),
+      db.query<{ name: string }>(`SELECT name FROM "Area" ORDER BY name`),
+      db.query<{ name: string }>(`SELECT name FROM "User" WHERE active = true ORDER BY name`),
     ])
 
-    await pool.end()
-
-    const clients = clientsRes.rows.map(r => r.name)
-    const projects = projectsRes.rows.map(r =>
-      r.client ? `${r.name} (${r.client})` : r.name
-    )
-    const areas = areasRes.rows.map(r => r.name)
-    const users = usersRes.rows.map(r => r.name)
-
-    cached = { clients, projects, areas, users }
+    cached = {
+      clients: clientsRes.rows.map(r => r.name),
+      projects: projectsRes.rows.map(r => r.client ? `${r.name} (${r.client})` : r.name),
+      areas: areasRes.rows.map(r => r.name),
+      users: usersRes.rows.map(r => r.name),
+    }
     cacheTime = Date.now()
 
-    console.log(`[DB] Loaded context — ${clients.length} clients, ${projects.length} projects, ${areas.length} areas, ${users.length} users`)
+    console.log(`[DB] Loaded: ${cached.clients.length} clients, ${cached.projects.length} projects, ${cached.areas.length} areas, ${cached.users.length} users`)
     return cached
   } catch (err: any) {
-    console.error('[DB] Failed to load DB context:', err.message)
+    console.error('[DB] Failed to load context:', err.message)
     return { clients: [], projects: [], areas: [], users: [] }
   }
 }
 
-/** Format DB context as a compact string for injection into the AI prompt */
+/** Format DB context as compact text for the AI prompt */
 export function formatDBContextForPrompt(ctx: DBContext): string {
   if (!ctx.clients.length && !ctx.projects.length && !ctx.areas.length && !ctx.users.length) {
     return ''
   }
   const lines: string[] = [
-    '--- REFERENCE DATABASE ---',
-    'Use this to fill any field not explicitly mentioned in the transcript.',
-    'Pick the most contextually fitting option from the lists below.',
+    '--- REFERENCE DATABASE (use to fill any field not found in transcript) ---',
   ]
   if (ctx.clients.length) lines.push(`CLIENTS: ${ctx.clients.join(', ')}`)
   if (ctx.projects.length) lines.push(`PROJECTS: ${ctx.projects.join(' | ')}`)

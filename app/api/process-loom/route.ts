@@ -40,6 +40,11 @@ export async function POST(request: NextRequest) {
 
     console.log(`Processing Loom video: ${videoId}`)
 
+    // Step 0: Fetch DB reference data FIRST (names only — before any heavy processing)
+    console.log('Step 0: Loading DB reference data...')
+    const dbCtx = await getDBContext()
+    const dbContextString = formatDBContextForPrompt(dbCtx)
+
     // Step 1: Download the video
     console.log('Step 1: Downloading video...')
     const { videoPath: downloadedVideoPath } = await downloadLoomVideo(loomUrl)
@@ -81,10 +86,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`Parsed ${transcript.length} transcript entries`)
 
-    // Step 3: Analyze transcript with AI (tasks + summary + DB context in parallel)
+    // Step 3: Analyze transcript with AI (tasks + summary in parallel)
     console.log('Step 3: Analyzing transcript with AI...')
-    const dbCtx = await getDBContext()
-    const dbContextString = formatDBContextForPrompt(dbCtx)
     const [tasks, summary] = await Promise.all([
       analyzeTranscriptWithAI(transcript, dbContextString),
       generateVideoSummary(transcript),
