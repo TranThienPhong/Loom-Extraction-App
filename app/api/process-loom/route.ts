@@ -3,6 +3,7 @@ import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/vi
 import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
 import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptWithAI, generateVideoSummary } from '@/lib/aiProviders'
+import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -38,6 +39,11 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`Processing Loom video: ${videoId}`)
+
+    // Step 0: Fetch DB reference data FIRST (names only — before any heavy processing)
+    console.log('Step 0: Loading DB reference data...')
+    const dbCtx = await getDBContext()
+    const dbContextString = formatDBContextForPrompt(dbCtx)
 
     // Step 1: Download the video
     console.log('Step 1: Downloading video...')
@@ -83,7 +89,7 @@ export async function POST(request: NextRequest) {
     // Step 3: Analyze transcript with AI (tasks + summary in parallel)
     console.log('Step 3: Analyzing transcript with AI...')
     const [tasks, summary] = await Promise.all([
-      analyzeTranscriptWithAI(transcript),
+      analyzeTranscriptWithAI(transcript, dbContextString),
       generateVideoSummary(transcript),
     ])
 

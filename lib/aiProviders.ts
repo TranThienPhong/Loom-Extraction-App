@@ -27,7 +27,7 @@ export interface TranscriptEntry {
  */
 
 // Anthropic Claude provider
-export async function analyzeWithClaude(transcript: TranscriptEntry[]): Promise<AIAnalysisResult[]> {
+export async function analyzeWithClaude(transcript: TranscriptEntry[], dbContext = ''): Promise<AIAnalysisResult[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY
 
   if (!apiKey) {
@@ -40,27 +40,45 @@ export async function analyzeWithClaude(transcript: TranscriptEntry[]): Promise<
     .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
     .join('\n')
 
-  const prompt = buildAnalysisPrompt(transcriptText)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
 
-  try {
-    console.log('Using Anthropic Claude for AI analysis...')
-    
-    const message = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 16384, // Increased from 4096 to handle long videos with many tasks
-      messages: [{ role: 'user', content: prompt }],
-    })
+  const MAX_RETRIES = 4
+  const RETRY_DELAY_MS = [5000, 10000, 20000, 30000]
 
-    const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
-    return parseAIResponse(responseText)
-  } catch (error: any) {
-    console.error('Claude API error:', error.message)
-    throw new Error(`Claude API failed: ${error.message}`)
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      console.log(`Using Anthropic Claude for AI analysis... (attempt ${attempt}/${MAX_RETRIES})`)
+
+      const message = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 16384,
+        messages: [{ role: 'user', content: prompt }],
+      })
+
+      const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
+      return parseAIResponse(responseText)
+    } catch (error: any) {
+      const isOverloaded = error.status === 529 || (typeof error.message === 'string' && error.message.includes('overloaded'))
+      const isRateLimit = error.status === 429 || (typeof error.message === 'string' && error.message.includes('rate_limit'))
+      const shouldRetry = (isOverloaded || isRateLimit) && attempt < MAX_RETRIES
+
+      if (shouldRetry) {
+        const delay = RETRY_DELAY_MS[attempt - 1]
+        console.warn(`Claude overloaded/rate-limited (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay / 1000}s...`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+        continue
+      }
+
+      console.error('Claude API error:', error.message)
+      throw new Error(`Claude API failed: ${error.message}`)
+    }
   }
+
+  throw new Error('Claude API failed after all retries')
 }
 
 // OpenAI GPT-4 provider
-export async function analyzeWithOpenAI(transcript: TranscriptEntry[]): Promise<AIAnalysisResult[]> {
+export async function analyzeWithOpenAI(transcript: TranscriptEntry[], dbContext = ''): Promise<AIAnalysisResult[]> {
   const apiKey = process.env.OPENAI_API_KEY
 
   if (!apiKey) {
@@ -71,7 +89,7 @@ export async function analyzeWithOpenAI(transcript: TranscriptEntry[]): Promise<
     .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
     .join('\n')
 
-  const prompt = buildAnalysisPrompt(transcriptText)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
 
   try {
     console.log('Using OpenAI GPT-4 for AI analysis...')
@@ -105,7 +123,7 @@ export async function analyzeWithOpenAI(transcript: TranscriptEntry[]): Promise<
 }
 
 // OpenRouter provider (supports many free models)
-export async function analyzeWithOpenRouter(transcript: TranscriptEntry[]): Promise<AIAnalysisResult[]> {
+export async function analyzeWithOpenRouter(transcript: TranscriptEntry[], dbContext = ''): Promise<AIAnalysisResult[]> {
   const apiKey = process.env.OPENROUTER_API_KEY
 
   if (!apiKey) {
@@ -116,7 +134,7 @@ export async function analyzeWithOpenRouter(transcript: TranscriptEntry[]): Prom
     .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
     .join('\n')
 
-  const prompt = buildAnalysisPrompt(transcriptText)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
 
   try {
     console.log('Using OpenRouter for AI analysis...')
@@ -152,7 +170,7 @@ export async function analyzeWithOpenRouter(transcript: TranscriptEntry[]): Prom
 }
 
 // Ollama local provider (free, runs locally)
-export async function analyzeWithOllama(transcript: TranscriptEntry[]): Promise<AIAnalysisResult[]> {
+export async function analyzeWithOllama(transcript: TranscriptEntry[], dbContext = ''): Promise<AIAnalysisResult[]> {
   const model = process.env.OLLAMA_MODEL || 'llama3.1'
   const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
 
@@ -160,7 +178,7 @@ export async function analyzeWithOllama(transcript: TranscriptEntry[]): Promise<
     .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
     .join('\n')
 
-  const prompt = buildAnalysisPrompt(transcriptText)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
 
   try {
     console.log(`Using Ollama (${model}) for AI analysis...`)
@@ -192,11 +210,11 @@ export async function analyzeWithOllama(transcript: TranscriptEntry[]): Promise<
 }
 
 // Build the analysis prompt
-function buildAnalysisPrompt(transcriptText: string): string {
+function buildAnalysisPrompt(transcriptText: string, dbContext = ''): string {
   return `You are analyzing a video transcript where someone is providing feedback, requesting changes, or identifying issues that need to be fixed.
 
 Your task: Extract EVERY moment where a task, fix, change, or improvement is mentioned or requested.
-
+${dbContext ? '\n' + dbContext + '\n' : ''}
 Here is the transcript with timestamps:
 
 ${transcriptText}
@@ -210,9 +228,12 @@ Instructions:
    - After state (result of action, popup, error shown)
    - For simple issues, 1 screenshot at the mention time is enough
    - For complex interactions, capture 2-3 moments (before/during/after)
-4. Create a clear, actionable task name (5-10 words)
+4. Create a clear, actionable task name (5-10 words). Do NOT start it with a number or ordinal prefix.
 5. Write a CONCISE task description (2-3 sentences max, ~50 words) with key context only
-6. If mentioned in transcript, extract: project name, client name, area/job role, assignee
+6. For project, client, area, and assignee:
+   - First try to extract them from the transcript
+   - If the transcript does NOT mention a value, pick the BEST matching option from the Reference Database above (if provided)
+   - Leave empty ONLY if there is truly no reasonable match in either the transcript or the database
 7. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default 3.0 if not stated.
 8. Complexity: one of "SupC" (Super Complex), "COMP" (Complex), "MOD" (Moderate), "SIMP" (Simple)
 9. Task Type: "Need-to-have" if the speaker explicitly marks it as urgent, must-do today, blocking, or critical. "Nice-to-have" for everything else — including tasks that are not mentioned as urgent, low-priority suggestions, or improvements with no stated deadline.
@@ -223,15 +244,15 @@ Return ONLY a JSON array with no additional text, explanation, or markdown forma
 {
   "timestamp_seconds": <number>,
   "timestamp_label": "<M:SS format>",
-  "task_name": "<short descriptive title>",
+  "task_name": "<short descriptive title — no leading numbers>",
   "task_description": "<concise description>",
   "screenshot_timestamps": [<array of 1-3 timestamp numbers in seconds>],
   "priority": <number e.g. 3.0>,
   "complexity": "<SupC|COMP|MOD|SIMP>",
-  "project": "<project name or empty string>",
-  "client": "<client name or empty string>",
-  "area": "<job role / area or empty string>",
-  "assignee": "<assignee name or empty string>",
+  "project": "<project name from transcript or database>",
+  "client": "<client name from transcript or database>",
+  "area": "<area/job role from transcript or database>",
+  "assignee": "<assignee name from transcript or database>",
   "task_type": "<Need-to-have|Nice-to-have>"
 }
 
@@ -245,10 +266,10 @@ Example:
     "screenshot_timestamps": [44, 46],
     "priority": 3.0,
     "complexity": "SIMP",
-    "project": "",
-    "client": "",
-    "area": "",
-    "assignee": "",
+    "project": "Taskr App",
+    "client": "LaunchMen",
+    "area": "Graphic Design",
+    "assignee": "Phong Tran",
     "task_type": "Nice-to-have"
   }
 ]
@@ -342,7 +363,7 @@ Write only the summary, no preamble.`
 /**
  * Main function: tries providers in order until one succeeds
  */
-export async function analyzeTranscriptWithAI(transcript: TranscriptEntry[]): Promise<AIAnalysisResult[]> {
+export async function analyzeTranscriptWithAI(transcript: TranscriptEntry[], dbContext = ''): Promise<AIAnalysisResult[]> {
   const providers = [
     { name: 'Anthropic Claude', fn: analyzeWithClaude, envCheck: () => !!process.env.ANTHROPIC_API_KEY },
     { name: 'OpenAI GPT-4', fn: analyzeWithOpenAI, envCheck: () => !!process.env.OPENAI_API_KEY },
@@ -368,7 +389,7 @@ export async function analyzeTranscriptWithAI(transcript: TranscriptEntry[]): Pr
   for (const provider of availableProviders) {
     try {
       console.log(`\nAttempting ${provider.name}...`)
-      return await provider.fn(transcript)
+      return await provider.fn(transcript, dbContext)
     } catch (error: any) {
       console.error(`${provider.name} failed:`, error.message)
       // Continue to next provider

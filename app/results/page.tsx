@@ -169,6 +169,10 @@ export default function Results() {
     setSelectedIds(new Set())
   }
 
+  const updateTaskUrgency = (id: string, value: string) => {
+    setTasks(prev => prev.map(t => t._id === id ? { ...t, task_type: value } : t))
+  }
+
   const toggleSelect = (id: string) => {
     setSelectedIds(prev => {
       const s = new Set(prev)
@@ -519,7 +523,7 @@ export default function Results() {
 
     const nm = 'Not mentioned'
     const tableRows = tasks.map((t, i) => [
-      `${i + 1}. ${t.task_name}`,
+      t.task_name,
       t.task_description || nm,
       t.project || nm,
       t.client || nm,
@@ -828,6 +832,19 @@ export default function Results() {
                           <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border border-indigo-300">
                             ⏱ {task.timestamp_label}
                           </span>
+                          {/* Urgency dropdown */}
+                          <select
+                            value={task.task_type || 'Nice-to-have'}
+                            onChange={e => updateTaskUrgency(task._id, e.target.value)}
+                            className={`text-xs font-semibold px-2 py-1 border-2 cursor-pointer focus:outline-none ${
+                              (task.task_type || 'Nice-to-have') === 'Need-to-have'
+                                ? 'bg-red-50 border-red-300 text-red-700'
+                                : 'bg-gray-50 border-gray-300 text-gray-600'
+                            }`}
+                          >
+                            <option value="Need-to-have">🔴 Need-to-have</option>
+                            <option value="Nice-to-have">🟢 Nice-to-have</option>
+                          </select>
                         </div>
                         <p className="text-gray-700 leading-relaxed">{task.task_description}</p>
                       </>
@@ -945,7 +962,23 @@ export default function Results() {
             </button>
           </div>
         )}
-      </div>
+
+        {/* Transcript */}
+        {transcript.length > 0 && (
+          <div className="mt-10 border-t-2 border-gray-200 pt-8">
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">📝 Full Transcript</h2>
+            <div className="bg-white border-2 border-gray-200 divide-y divide-gray-100 max-h-[600px] overflow-y-auto">
+              {transcript.map((line, i) => (
+                <div key={i} className="flex gap-4 px-4 py-2.5 hover:bg-gray-50">
+                  <span className="text-xs font-mono font-semibold text-indigo-500 mt-0.5 flex-shrink-0 w-12">{line.t}</span>
+                  <span className="text-sm text-gray-700 leading-relaxed">{line.s}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+      </div>{/* max-w-5xl */}
 
       {/* Lightbox */}
       {lightboxImage && (
