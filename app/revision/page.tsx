@@ -21,6 +21,8 @@ interface RevisionNote {
   note_type: 'timestamped'
   timestamp_seconds: number
   timestamp_label: string
+  referenced_timestamp_seconds?: number | null
+  referenced_timestamp_label?: string | null
   note: string
   raw_speech?: string
   completed: boolean
@@ -28,7 +30,7 @@ interface RevisionNote {
   screenshots?: RevisionScreenshot[]
 }
 
-type FilterType = 'all' | 'pending' | 'completed' | 'global'
+type FilterType = 'all' | 'pending' | 'completed'
 
 export default function RevisionPage() {
   const router = useRouter()
@@ -130,17 +132,15 @@ export default function RevisionPage() {
   const loomTimestampUrl = (ts: number) =>
     videoId ? `https://www.loom.com/share/${videoId}?t=${ts}` : (loomUrl || '')
 
-  const pendingCount = revisionNotes.filter(n => !n.completed).length + globalNotes.filter(n => !n.completed).length
-  const completedCount = revisionNotes.filter(n => n.completed).length + globalNotes.filter(n => n.completed).length
-  const totalCount = globalNotes.length + revisionNotes.length
+  const pendingCount = revisionNotes.filter(n => !n.completed).length
+  const completedCount = revisionNotes.filter(n => n.completed).length
+  const totalCount = revisionNotes.length
 
   const visibleRevisionNotes = revisionNotes.filter(n => {
     if (filter === 'pending') return !n.completed
     if (filter === 'completed') return n.completed
-    if (filter === 'global') return false
     return true
   })
-  const showGlobalSection = filter === 'all' || filter === 'global'
 
   // ── PDF export ────────────────────────────────────────────────────────────
   const handleExportPDF = async () => {
@@ -505,7 +505,7 @@ export default function RevisionPage() {
             </div>
             <h1 className="text-4xl font-bold text-gray-900">{title}</h1>
             <p className="text-gray-500 mt-1">
-              {globalNotes.length} global note{globalNotes.length !== 1 ? 's' : ''} · {revisionNotes.length} timestamped revision{revisionNotes.length !== 1 ? 's' : ''}
+              {revisionNotes.length} timestamped revision{revisionNotes.length !== 1 ? 's' : ''}
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
@@ -541,7 +541,6 @@ export default function RevisionPage() {
             </div>
           </div>
           <div className="flex flex-wrap gap-4 text-sm mb-3">
-            <span className="text-gray-600"><span className="font-semibold text-indigo-700">{globalNotes.length}</span> global</span>
             <span className="text-gray-600"><span className="font-semibold text-amber-700">{revisionNotes.length}</span> timestamped</span>
             <span className="text-gray-600"><span className="font-semibold text-green-700">{completedCount}</span> done</span>
             <span className="text-gray-600"><span className="font-semibold text-red-600">{pendingCount}</span> pending</span>
@@ -573,7 +572,7 @@ export default function RevisionPage() {
 
         {/* ── Filter tabs ── */}
         <div className="flex border-b-2 border-gray-200 mb-6 bg-white">
-          {(['all', 'pending', 'completed', 'global'] as FilterType[]).map(f => (
+          {(['all', 'pending', 'completed'] as FilterType[]).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -584,81 +583,14 @@ export default function RevisionPage() {
               }`}
             >
               {f === 'all' ? `All (${totalCount})` :
-               f === 'pending' ? `Pending (${pendingCount})` :
-               f === 'completed' ? `Completed (${completedCount})` :
-               `Global Notes (${globalNotes.length})`}
+               f === 'pending' ? `Timestamps Notes (${pendingCount})` :
+               `Completed (${completedCount})`}
             </button>
           ))}
         </div>
 
-        {/* ── Global Notes ── */}
-        {showGlobalSection && globalNotes.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">🌐 Global Notes</h2>
-            <div className="space-y-3">
-              {globalNotes.map(note => (
-                <div
-                  key={note.id}
-                  className={`bg-white shadow-md overflow-hidden transition-shadow border-2 ${
-                    note.completed ? 'border-green-300 opacity-80' : 'border-gray-200 hover:shadow-lg'
-                  }`}
-                >
-                  <div className="p-5">
-                    <div className="flex items-start gap-3">
-                      <button
-                        onClick={() => toggleGlobal(note.id)}
-                        className={`mt-0.5 w-5 h-5 flex-shrink-0 border-2 flex items-center justify-center transition-colors ${
-                          note.completed ? 'bg-green-500 border-green-500 text-white' : 'border-gray-300 hover:border-indigo-500'
-                        }`}
-                      >
-                        {note.completed && <span className="text-xs">✓</span>}
-                      </button>
-                      <div className="flex-1 min-w-0">
-                        {editingId === note.id ? (
-                          <div className="space-y-2">
-                            <textarea
-                              value={editText}
-                              onChange={e => setEditText(e.target.value)}
-                              rows={2}
-                              className="w-full border-2 border-indigo-300 px-3 py-2 text-gray-800 text-sm resize-none focus:outline-none focus:border-indigo-500"
-                              autoFocus
-                            />
-                            <div className="flex gap-2">
-                              <button onClick={() => saveEdit(note.id)}
-                                className="px-4 py-1.5 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">Save</button>
-                              <button onClick={() => setEditingId(null)}
-                                className="px-4 py-1.5 text-sm font-semibold border border-gray-300 text-black bg-white hover:bg-gray-50">Cancel</button>
-                            </div>
-                          </div>
-                        ) : (
-                          <p className={`text-base leading-relaxed ${note.completed ? 'line-through text-gray-400' : 'text-gray-800'}`}>
-                            {note.note}
-                          </p>
-                        )}
-                      </div>
-                      {editingId !== note.id && (
-                        <div className="flex gap-2 flex-shrink-0">
-                          <button onClick={() => startEdit(note.id, note.note)} title="Edit"
-                            className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 border border-gray-200 transition-colors">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                          </button>
-                          <button onClick={() => deleteGlobal(note.id)} title="Delete"
-                            className="w-8 h-8 flex items-center justify-center text-gray-400 hover:text-red-600 hover:bg-red-50 border border-gray-200 transition-colors">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3,6 5,6 21,6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {/* ── Timestamped Revision Notes ── */}
-        {filter !== 'global' && (
-          <div>
+        <div>
             <h2 className="text-2xl font-bold text-gray-900 mb-4">
               ⏱ Timestamped Revision Notes
               {visibleRevisionNotes.length !== revisionNotes.length && (
@@ -697,7 +629,7 @@ export default function RevisionPage() {
                           <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-2 mb-2">
                               <span className="inline-block bg-amber-100 text-amber-800 text-sm font-semibold px-3 py-1 border border-amber-300">
-                                ⏱ {note.timestamp_label}
+                                ⏱ {note.referenced_timestamp_label || note.timestamp_label}
                               </span>
                               {note.loom_url && (
                                 <a href={note.loom_url} target="_blank" rel="noreferrer"
@@ -803,7 +735,6 @@ export default function RevisionPage() {
               </div>
             )}
           </div>
-        )}
 
         {/* ── Transcript ── */}
         {transcript.length > 0 && (
