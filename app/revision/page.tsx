@@ -291,7 +291,8 @@ export default function RevisionPage() {
         for (let s = 0; s < shots.length; s++) {
           const shot = shots[s]
           const imgSrc = shot.image_base64 || shot.image_url
-          const shotUrl = shot.timestamp_seconds ? loomTimestampUrl(shot.timestamp_seconds) : noteUrl
+          // Always link to the note's transcript timestamp (when user mentioned the revision)
+          const shotUrl = noteUrl
 
           if (y + imgH + 20 > pageH - 20) {
             doc.addPage(); y = 12
@@ -301,7 +302,7 @@ export default function RevisionPage() {
 
           doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(90, 90, 110)
           doc.text(
-            shots.length > 1 ? `Screenshot ${s + 1}/${shots.length}  —  ${shot.timestamp_label}` : `Screenshot  —  ${shot.timestamp_label}`,
+            shots.length > 1 ? `Screenshot ${s + 1}/${shots.length}  —  ${note.timestamp_label}` : `Screenshot  —  ${note.timestamp_label}`,
             mL, y
           ); y += 4
 
@@ -760,9 +761,8 @@ export default function RevisionPage() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                               {shots.map((shot, si) => {
                                 const src = shot.image_base64 || shot.image_url
-                                const shotUrl = shot.timestamp_seconds
-                                  ? loomTimestampUrl(shot.timestamp_seconds)
-                                  : (note.loom_url || loomTimestampUrl(note.timestamp_seconds))
+                                // Badge links to the transcript timestamp — when the user mentioned this revision
+                                const noteTimestampUrl = note.loom_url || loomTimestampUrl(note.timestamp_seconds)
                                 return (
                                   <div
                                     key={si}
@@ -770,19 +770,19 @@ export default function RevisionPage() {
                                   >
                                     <img
                                       src={src}
-                                      alt={`Screenshot at ${shot.timestamp_label}`}
+                                      alt={`Screenshot at ${note.timestamp_label}`}
                                       className="w-full h-auto block"
                                       onClick={() => openLightbox(shots, si)}
                                     />
-                                    {shotUrl && (
+                                    {noteTimestampUrl && (
                                       <a
-                                        href={shotUrl}
+                                        href={noteTimestampUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={e => e.stopPropagation()}
                                         className="absolute bottom-2 left-2 bg-black bg-opacity-75 hover:bg-opacity-90 text-white text-xs font-bold px-2 py-1 rounded shadow z-10"
                                       >
-                                        ⏱ {shot.timestamp_label}
+                                        ⏱ {note.timestamp_label}
                                       </a>
                                     )}
                                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-25 transition-all flex items-center justify-center pointer-events-none">

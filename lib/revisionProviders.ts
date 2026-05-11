@@ -101,11 +101,8 @@ Instructions:
    - "The main title font must always be bold and left-aligned"
    - "All graph lines should use the brand color palette"
 
-4. **Timestamped Revision Notes**: Specific fixes tied to exact moments in the Loom recording.
-   - **CRITICAL**: The timestamp_seconds and timestamp_label MUST come from the [M:SS] marker at the START of the transcript line where the reviewer spoke the feedback -- that is the position in the Loom recording.
-   - Do NOT use any time values the reviewer mentions verbally (e.g. "at 2:30" or "around the 3 minute mark" in the video they are reviewing). Those refer to the video under review, not the Loom recording.
-   - Example: if the transcript line is "[1:45] at about 2:30 the logo looks wrong", the timestamp_seconds must be 105 (1 minute 45 seconds = position in the Loom) NOT 150.
-
+4. **Timestamped Revision Notes**: Specific fixes tied to exact moments in the video.
+   
 5. **AI Cleanup — CRITICAL**: Convert rough, unclear speech into precise, professional editor instructions.
    Before/After examples:
    - "this line should be green" → "Change the animated red descending graph line to green"
@@ -128,11 +125,11 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no extra
   ],
   "revision_notes": [
     {
-      "timestamp_seconds": <integer seconds from the [M:SS] marker at the start of the transcript line where the reviewer spoke>,
-      "timestamp_label": "<M:SS from the same [M:SS] transcript marker, NOT from verbal time references in speech>",
+      "timestamp_seconds": <primary timestamp as integer>,
+      "timestamp_label": "<M:SS format>",
       "note": "<clean, professional editor instruction>",
       "raw_speech": "<verbatim original speech from transcript>",
-      "screenshot_timestamps": [<1-3 integers near timestamp_seconds for frame capture>]
+      "screenshot_timestamps": [<1-3 timestamp numbers as integers>]
     }
   ]
 }
