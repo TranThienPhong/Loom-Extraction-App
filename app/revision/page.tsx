@@ -135,6 +135,9 @@ export default function RevisionPage() {
   const pendingCount = revisionNotes.filter(n => !n.completed).length + globalNotes.filter(n => !n.completed).length
   const completedCount = revisionNotes.filter(n => n.completed).length + globalNotes.filter(n => n.completed).length
   const totalCount = globalNotes.length + revisionNotes.length
+  // Tab counts — only revision notes (global has its own tab)
+  const revisionPendingCount = revisionNotes.filter(n => !n.completed).length
+  const revisionCompletedCount = revisionNotes.filter(n => n.completed).length
 
   const visibleRevisionNotes = revisionNotes.filter(n => {
     if (filter === 'pending') return !n.completed
@@ -411,7 +414,7 @@ export default function RevisionPage() {
   // ── DOCX export ───────────────────────────────────────────────────────────
   const handleExportDocx = async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink } = await import('docx') as any
+    const { Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink, ImageRun } = await import('docx') as any
 
     const dateStr = new Date().toLocaleDateString()
     const children: any[] = []
@@ -451,7 +454,7 @@ export default function RevisionPage() {
 
     if (revisionNotes.length > 0) {
       children.push(new Paragraph({ text: 'Timestamped Revision Notes', heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 120 } }))
-      revisionNotes.forEach((note) => {
+      for (const note of revisionNotes) {
         const tsChildren: any[] = [
           new TextRun({ text: `[${note.timestamp_label}]  `, bold: true, color: note.completed ? '888888' : '2244AA', size: 20 }),
         ]
@@ -475,7 +478,57 @@ export default function RevisionPage() {
             spacing: { before: 20, after: 120 },
           }))
         }
-      })
+        // Screenshots
+        const shots = (note.screenshots || []).filter((s: any) => s.image_base64 || s.image_url)
+        if (shots.length > 0) {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: `Screenshots (${shots.length}):`, bold: true, size: 18, color: '555555' })],
+            spacing: { before: 80, after: 40 },
+            indent: { left: 360 },
+          }))
+          for (const shot of shots) {
+            try {
+              const src: string = shot.image_base64 || shot.image_url || ''
+              let base64: string | null = null
+              if (src.startsWith('data:')) {
+                base64 = src.split(',')[1] || null
+              } else if (src.startsWith('http')) {
+                try {
+                  const resp = await fetch(src)
+                  const buf = await resp.arrayBuffer()
+                  base64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+                } catch { base64 = null }
+              }
+              if (base64) {
+                children.push(new Paragraph({
+                  children: [
+                    new ImageRun({
+                      data: base64,
+                      transformation: { width: 400, height: 225 },
+                      type: 'jpg',
+                    }),
+                  ],
+                  spacing: { before: 40, after: 20 },
+                  indent: { left: 360 },
+                }))
+                const shotUrl = shot.timestamp_seconds
+                  ? loomTimestampUrl(shot.timestamp_seconds)
+                  : (note.loom_url || loomTimestampUrl(note.timestamp_seconds))
+                const capChildren: any[] = [
+                  new TextRun({ text: `⏱ ${shot.timestamp_label}`, size: 16, color: '444466', bold: true }),
+                ]
+                if (shotUrl) {
+                  capChildren.push(
+                    new TextRun({ text: '   ' }),
+                    new ExternalHyperlink({ link: shotUrl, children: [new TextRun({ text: '↗ Open in Loom', color: '1155CC', size: 16, underline: {} })] })
+                  )
+                }
+                children.push(new Paragraph({ children: capChildren, spacing: { before: 0, after: 80 }, indent: { left: 360 } }))
+              }
+            } catch { /* skip failed image */ }
+          }
+        }
+      }
     }
 
     const doc = new Document({ title, description: summary, sections: [{ children }] })
@@ -594,8 +647,8 @@ export default function RevisionPage() {
               }`}
             >
               {f === 'all' ? `All (${totalCount})` :
-               f === 'pending' ? `Timestamps Notes (${pendingCount})` :
-               f === 'completed' ? `Completed (${completedCount})` :
+               f === 'pending' ? `Timestamps Notes (${revisionPendingCount})` :
+               f === 'completed' ? `Completed (${revisionCompletedCount})` :
                `Global Notes (${globalNotes.length})`}
             </button>
           ))}
@@ -712,7 +765,7 @@ export default function RevisionPage() {
                               {note.loom_url && (
                                 <a href={note.loom_url} target="_blank" rel="noreferrer"
                                   className="inline-block bg-indigo-600 text-white text-xs font-semibold px-3 py-1 hover:bg-indigo-700 transition-colors border-2 border-indigo-700">
-                                  Watch in Loom
+                                  ↗ Jump to video
                                 </a>
                               )}
                               <span className="text-xs text-gray-400 ml-auto">#{idx + 1}</span>
@@ -771,8 +824,10 @@ export default function RevisionPage() {
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                               {shots.map((shot, si) => {
                                 const src = shot.image_base64 || shot.image_url
-                                // Badge links to the transcript timestamp — when the user mentioned this revision
-                                const noteTimestampUrl = note.loom_url || loomTimestampUrl(note.timestamp_seconds)
+                                // Each badge is unique to this frame — same as tasks mode
+                                const shotTimestampUrl = shot.timestamp_seconds
+                                  ? loomTimestampUrl(shot.timestamp_seconds)
+                                  : (note.loom_url || loomTimestampUrl(note.timestamp_seconds))
                                 return (
                                   <div
                                     key={si}
@@ -780,19 +835,19 @@ export default function RevisionPage() {
                                   >
                                     <img
                                       src={src}
-                                      alt={`Screenshot at ${note.timestamp_label}`}
+                                      alt={`Screenshot at ${shot.timestamp_label}`}
                                       className="w-full h-auto block"
                                       onClick={() => openLightbox(shots, si)}
                                     />
-                                    {noteTimestampUrl && (
+                                    {shotTimestampUrl && (
                                       <a
-                                        href={noteTimestampUrl}
+                                        href={shotTimestampUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         onClick={e => e.stopPropagation()}
                                         className="absolute bottom-2 left-2 bg-black bg-opacity-75 hover:bg-opacity-90 text-white text-xs font-bold px-2 py-1 rounded shadow z-10"
                                       >
-                                        ⏱ {note.timestamp_label}
+                                        ⏱ {shot.timestamp_label}
                                       </a>
                                     )}
                                     <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-25 transition-all flex items-center justify-center pointer-events-none">
