@@ -127,201 +127,112 @@ export default function RevisionPage() {
   })
   const showGlobalSection = filter === 'all' || filter === 'global'
 
-  // ── PDF export ──────────────────────────────────────────────────────────
-  const handleExportPDF = async () => {
-    const { jsPDF } = await import('jspdf')
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-    const pageW = 210
-    const pageH = 297
-    const mL = 15
-    const mR = 15
-    const cW = pageW - mL - mR
-    let y = 20
+  // ── DOCX export ─────────────────────────────────────────────────────────
+  const handleExportDocx = async () => {
+    const {
+      Document, Packer, Paragraph, TextRun, HeadingLevel, ExternalHyperlink,
+      AlignmentType, BorderStyle, ShadingType, TableRow, TableCell, Table,
+      WidthType, PageBreak,
+    } = await import('docx')
 
-    const addPage = () => { doc.addPage(); y = 20 }
-    const checkPage = (needed: number) => { if (y + needed > pageH - 20) addPage() }
+    const dateStr = new Date().toLocaleDateString()
+    const children: any[] = []
 
-    const hr = (yPos: number) => {
-      doc.setDrawColor(200, 200, 210)
-      doc.setLineWidth(0.2)
-      doc.line(mL, yPos, pageW - mR, yPos)
-    }
-
-    // Cover
-    doc.setFontSize(22)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(20, 30, 100)
-    const titleLines = doc.splitTextToSize(title, cW)
-    doc.text(titleLines, mL, y)
-    y += titleLines.length * 9 + 4
-
-    doc.setDrawColor(60, 90, 220)
-    doc.setLineWidth(0.8)
-    doc.line(mL, y, pageW - mR, y)
-    doc.setLineWidth(0.2)
-    y += 8
-
-    if (loomUrl) {
-      doc.setFontSize(9)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(30, 70, 200)
-      doc.textWithLink(`Loom Source: ${loomUrl}`, mL, y, { url: loomUrl })
-      y += 6
-    }
-
-    doc.setFontSize(8)
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(80, 80, 100)
-    doc.text(
-      `Generated: ${new Date().toLocaleDateString()}  •  ${globalNotes.length} global notes  •  ${revisionNotes.length} revision notes`,
-      mL,
-      y
+    // Title
+    children.push(
+      new Paragraph({
+        text: title,
+        heading: HeadingLevel.TITLE,
+        spacing: { after: 120 },
+      })
     )
-    y += 8
 
-    if (summary) {
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'italic')
-      doc.setTextColor(50, 50, 70)
-      const sumLines = doc.splitTextToSize(summary, cW)
-      doc.text(sumLines, mL, y)
-      y += sumLines.length * 5 + 6
-    }
-
-    hr(y); y += 8
-
-    // Global Notes
-    if (globalNotes.length > 0) {
-      checkPage(20)
-      doc.setFontSize(13)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(20, 30, 100)
-      doc.text('Global Notes', mL, y)
-      y += 7
-
-      globalNotes.forEach((note, i) => {
-        checkPage(16)
-        doc.setFontSize(9)
-        doc.setFont('helvetica', 'normal')
-        doc.setTextColor(note.completed ? 130 : 30, note.completed ? 160 : 30, note.completed ? 130 : 30)
-        const prefix = note.completed ? '☑' : '☐'
-        const lines = doc.splitTextToSize(`${prefix}  ${i + 1}. ${note.note}`, cW - 4)
-        checkPage(lines.length * 5 + 4)
-        doc.text(lines, mL + 2, y)
-        y += lines.length * 5 + 3
-      })
-      y += 4
-    }
-
-    hr(y); y += 8
-
-    // Timestamped Revision Notes
-    doc.setFontSize(13)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(20, 30, 100)
-    doc.text('Timestamped Revision Notes', mL, y)
-    y += 7
-
-    for (let i = 0; i < revisionNotes.length; i++) {
-      const note = revisionNotes[i]
-
-      checkPage(30)
-
-      // Note header band
-      doc.setFillColor(note.completed ? 240 : 235, note.completed ? 248 : 238, note.completed ? 240 : 255)
-      doc.rect(mL, y - 3, cW, 12, 'F')
-
-      doc.setFontSize(8)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(note.completed ? 100 : 30, note.completed ? 130 : 50, note.completed ? 100 : 180)
-      doc.text(`${note.completed ? '☑' : '☐'}  ${note.timestamp_label}`, mL + 2, y + 4)
-
-      if (note.loom_url) {
-        doc.setTextColor(30, 70, 200)
-        doc.textWithLink('→ Jump to timestamp', pageW - mR - 35, y + 4, { url: note.loom_url })
-      }
-      y += 12
-
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(note.completed ? 100 : 20, note.completed ? 100 : 20, note.completed ? 100 : 20)
-      const noteLines = doc.splitTextToSize(note.note, cW - 4)
-      checkPage(noteLines.length * 5 + 4)
-      doc.text(noteLines, mL + 2, y)
-      y += noteLines.length * 5 + 3
-
-      if (note.raw_speech && note.raw_speech !== note.note) {
-        doc.setFontSize(8)
-        doc.setFont('helvetica', 'italic')
-        doc.setTextColor(130, 130, 130)
-        const rawLines = doc.splitTextToSize(`Original: "${note.raw_speech}"`, cW - 8)
-        checkPage(rawLines.length * 4 + 4)
-        doc.text(rawLines, mL + 4, y)
-        y += rawLines.length * 4 + 3
-      }
-
-      // Screenshot
-      const shot = note.screenshots?.[0]
-      if (shot) {
-        const imgSrc = shot.image_base64 || shot.image_url
-        if (imgSrc) {
-          const imgW = 80
-          const imgH = Math.round(imgW * 9 / 16)
-          checkPage(imgH + 10)
-          try {
-            doc.addImage(imgSrc, 'JPEG', mL + 2, y, imgW, imgH)
-            y += imgH + 4
-          } catch {}
-        }
-      }
-
-      y += 4
-      hr(y); y += 6
-    }
-
-    doc.save(`revision-notes-${new Date().toISOString().slice(0, 10)}.pdf`)
-  }
-
-  // ── Markdown export ─────────────────────────────────────────────────────
-  const handleExportMarkdown = () => {
-    const lines: string[] = [
-      `# ${title}`,
-      '',
-      `**Generated:** ${new Date().toLocaleDateString()}  |  **Source:** ${loomUrl || '—'}`,
-      '',
+    // Meta line
+    const metaParts: any[] = [
+      new TextRun({ text: `Generated: ${dateStr}`, color: '555555', size: 18 }),
+      new TextRun({ text: `   |   ${globalNotes.length} global notes  ·  ${revisionNotes.length} timestamped revisions`, color: '555555', size: 18 }),
     ]
+    if (loomUrl) {
+      metaParts.push(
+        new TextRun({ text: '   |   ', color: '555555', size: 18 }),
+        new ExternalHyperlink({ link: loomUrl, children: [new TextRun({ text: 'Open source video', color: '1155CC', size: 18, underline: {} })] })
+      )
+    }
+    children.push(new Paragraph({ children: metaParts, spacing: { after: 80 } }))
+
     if (summary) {
-      lines.push(`> ${summary}`, '')
+      children.push(new Paragraph({
+        children: [new TextRun({ text: summary, italics: true, color: '444466', size: 20 })],
+        spacing: { after: 200 },
+      }))
     }
-    lines.push(`---`, '', `**${globalNotes.length}** global notes · **${revisionNotes.length}** timestamped revisions`, '', `---`, '')
 
+    // ── Global Notes ──────────────────────────────────────────────────────
     if (globalNotes.length > 0) {
-      lines.push('## Global Notes', '')
-      globalNotes.forEach((n, i) => {
-        lines.push(`- [${n.completed ? 'x' : ' '}] **${i + 1}.** ${n.note}`)
+      children.push(new Paragraph({ text: 'Global Notes', heading: HeadingLevel.HEADING_1, spacing: { before: 300, after: 120 } }))
+      globalNotes.forEach((note, i) => {
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: note.completed ? '☑  ' : '☐  ', size: 22 }),
+            new TextRun({ text: `${i + 1}.  ${note.note}`, size: 22, strike: note.completed, color: note.completed ? '888888' : '111111' }),
+          ],
+          spacing: { before: 80, after: 80 },
+          indent: { left: 360 },
+        }))
       })
-      lines.push('')
     }
 
+    // ── Timestamped Revision Notes ────────────────────────────────────────
     if (revisionNotes.length > 0) {
-      lines.push('## Timestamped Revision Notes', '')
-      revisionNotes.forEach((n, i) => {
-        const link = n.loom_url ? ` ([↗ ${n.timestamp_label}](${n.loom_url}))` : ` (${n.timestamp_label})`
-        lines.push(`### ${i + 1}. ${n.timestamp_label}${link}`)
-        lines.push('')
-        lines.push(`- [${n.completed ? 'x' : ' '}] ${n.note}`)
-        if (n.raw_speech && n.raw_speech !== n.note) {
-          lines.push(`  > *Original: "${n.raw_speech}"*`)
+      children.push(new Paragraph({ text: 'Timestamped Revision Notes', heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 120 } }))
+
+      revisionNotes.forEach((note, i) => {
+        // Timestamp row
+        const tsChildren: any[] = [
+          new TextRun({ text: note.completed ? '☑  ' : '☐  ', size: 20, bold: true }),
+          new TextRun({ text: `[${note.timestamp_label}]  `, bold: true, color: note.completed ? '888888' : '2244AA', size: 20 }),
+        ]
+        if (note.loom_url) {
+          tsChildren.push(
+            new ExternalHyperlink({
+              link: note.loom_url,
+              children: [new TextRun({ text: '↗ Jump to video', color: '1155CC', size: 18, underline: {} })],
+            })
+          )
         }
-        lines.push('')
+        children.push(new Paragraph({ children: tsChildren, spacing: { before: 200, after: 60 } }))
+
+        // Note text
+        children.push(new Paragraph({
+          children: [
+            new TextRun({ text: note.note, size: 22, strike: note.completed, color: note.completed ? '888888' : '111111' }),
+          ],
+          indent: { left: 360 },
+          spacing: { before: 40, after: 60 },
+        }))
+
+        // Original speech
+        if (note.raw_speech && note.raw_speech !== note.note) {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: `Original: "${note.raw_speech}"`, italics: true, color: '999999', size: 18 })],
+            indent: { left: 360 },
+            spacing: { before: 20, after: 120 },
+          }))
+        }
       })
     }
 
-    const blob = new Blob([lines.join('\n')], { type: 'text/markdown' })
+    const doc = new Document({
+      title,
+      description: summary,
+      sections: [{ children }],
+    })
+
+    const blob = await Packer.toBlob(doc)
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `revision-notes-${new Date().toISOString().slice(0, 10)}.md`
+    a.download = `revision-notes-${new Date().toISOString().slice(0, 10)}.docx`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -335,7 +246,7 @@ export default function RevisionPage() {
           <div className="flex items-center gap-3 min-w-0">
             <button
               onClick={() => router.push('/')}
-              className="text-gray-500 hover:text-gray-800 flex-shrink-0"
+              className="text-gray-700 hover:text-gray-900 flex-shrink-0"
               title="Back to home"
             >
               ← Back
@@ -345,16 +256,10 @@ export default function RevisionPage() {
           </div>
           <div className="flex gap-2 flex-shrink-0">
             <button
-              onClick={handleExportMarkdown}
-              className="px-3 py-1.5 text-xs font-semibold border-2 border-gray-300 text-gray-700 hover:border-gray-400 transition-colors"
+              onClick={handleExportDocx}
+              className="px-3 py-1.5 text-xs font-semibold bg-amber-500 text-black hover:bg-amber-600 transition-colors"
             >
-              Export MD
-            </button>
-            <button
-              onClick={handleExportPDF}
-              className="px-3 py-1.5 text-xs font-semibold bg-amber-500 text-white hover:bg-amber-600 transition-colors"
-            >
-              Export PDF
+              Export .docx
             </button>
           </div>
         </div>
@@ -404,11 +309,11 @@ export default function RevisionPage() {
           {/* Bulk actions */}
           <div className="mt-3 flex gap-2">
             <button onClick={markAllComplete}
-              className="text-xs px-3 py-1 border border-green-300 text-green-700 hover:bg-green-50 transition-colors">
+              className="text-xs px-3 py-1 border border-green-300 text-black hover:bg-green-50 transition-colors">
               ✓ Mark all complete
             </button>
             <button onClick={markAllPending}
-              className="text-xs px-3 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50 transition-colors">
+              className="text-xs px-3 py-1 border border-gray-300 text-black hover:bg-gray-50 transition-colors">
               ↺ Reset all
             </button>
           </div>
@@ -423,7 +328,7 @@ export default function RevisionPage() {
               className={`px-5 py-2.5 text-sm font-medium border-b-2 transition-colors capitalize ${
                 filter === f
                   ? 'border-amber-500 text-amber-700'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
+                  : 'border-transparent text-gray-700 hover:text-gray-900'
               }`}
             >
               {f === 'all' ? `All (${totalCount})` :
@@ -566,11 +471,11 @@ export default function RevisionPage() {
 
                         <div className="flex gap-1">
                           <button onClick={() => startEdit(note.id, note.note)}
-                            className="text-xs px-2 py-1 text-gray-400 hover:text-gray-700 border border-transparent hover:border-gray-300">
+                            className="text-xs px-2 py-1 text-black hover:bg-gray-100 border border-transparent hover:border-gray-300">
                             Edit
                           </button>
-                          <button onClick={() => deleteRevision(note.id)}
-                            className="text-xs px-2 py-1 text-red-400 hover:text-red-600 border border-transparent hover:border-red-200">
+                          <button onClick={() => deleteGlobal(note.id)}
+                            className="text-xs px-2 py-1 text-black hover:bg-red-50 border border-transparent hover:border-red-200">
                             ✕
                           </button>
                         </div>
@@ -614,9 +519,9 @@ export default function RevisionPage() {
                               />
                               <div className="flex flex-col gap-1">
                                 <button onClick={() => saveEdit(note.id)}
-                                  className="text-xs px-2 py-1 bg-amber-500 text-white hover:bg-amber-600">Save</button>
+                                  className="text-xs px-2 py-1 bg-amber-500 text-black hover:bg-amber-600">Save</button>
                                 <button onClick={() => setEditingId(null)}
-                                  className="text-xs px-2 py-1 border border-gray-300 text-gray-600 hover:bg-gray-50">Cancel</button>
+                                  className="text-xs px-2 py-1 border border-gray-300 text-black hover:bg-gray-50">Cancel</button>
                               </div>
                             </div>
                           ) : (

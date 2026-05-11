@@ -11,6 +11,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.14.1",
     "@types/pg": "^8.20.0",
+    "docx": "^9.6.1",
     "jspdf": "^2.5.1",
     "jspdf-autotable": "^5.0.7",
     "next": "^16.2.1",

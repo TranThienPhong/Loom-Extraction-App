@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
-import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
+import { extractFrame, secondsToTimestamp, getVideoDuration } from '@/lib/frameExtractor'
 import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptForRevision } from '@/lib/revisionProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
@@ -87,6 +87,12 @@ export async function POST(request: NextRequest) {
 
     if (!videoPath) throw new Error('Video path not set')
 
+    // Get video duration to skip/clamp out-of-range timestamps
+    const videoDuration = await getVideoDuration(videoPath)
+    if (videoDuration) {
+      console.log(`[Revision] Video duration: ${Math.round(videoDuration)}s`)
+    }
+
     async function processWithConcurrencyLimit<T>(
       items: T[],
       limit: number,
@@ -105,9 +111,22 @@ export async function POST(request: NextRequest) {
       revisionResult.revision_notes,
       1,
       async (note) => {
-        const timestamps = note.screenshot_timestamps?.length
+        let timestamps = note.screenshot_timestamps?.length
           ? note.screenshot_timestamps
           : [note.timestamp_seconds]
+
+        // Clamp timestamps to video duration (prevents ffmpeg failures at end of video)
+        if (videoDuration) {
+          const clampedMax = Math.max(0, videoDuration - 2)
+          const before = timestamps.length
+          timestamps = timestamps
+            .map(ts => Math.min(ts, clampedMax))
+            // Deduplicate after clamping
+            .filter((ts, idx, arr) => arr.indexOf(ts) === idx)
+          if (timestamps.length < before) {
+            console.log(`[Revision] Clamped ${before - timestamps.length} out-of-range timestamp(s) for note "${note.note.substring(0, 40)}..."`)
+          }
+        }
 
         const screenshots = await processWithConcurrencyLimit(
           timestamps,

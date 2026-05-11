@@ -25,6 +25,23 @@ async function checkFfmpegInstalled(): Promise<boolean> {
 }
 
 /**
+ * Get the duration of a video file in seconds using ffprobe.
+ * Returns null if it cannot be determined.
+ */
+export async function getVideoDuration(videoPath: string): Promise<number | null> {
+  try {
+    const { stdout } = await execAsync(
+      `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${videoPath}"`,
+      { timeout: 15000 }
+    )
+    const dur = parseFloat(stdout.trim())
+    return isNaN(dur) ? null : dur
+  } catch {
+    return null
+  }
+}
+
+/**
  * Extracts a frame from a video at a specific timestamp using ffmpeg
  * Requires ffmpeg to be installed on the system
  * Install: sudo apt-get install ffmpeg (Ubuntu/Debian) or brew install ffmpeg (macOS)
