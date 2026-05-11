@@ -10,6 +10,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<{message: string, needsManualTranscript?: boolean} | null>(null)
   const [useManualTranscript, setUseManualTranscript] = useState(false)
+  const [mode, setMode] = useState<'task' | 'revision'>('task')
   const router = useRouter()
 
   // Auto-show manual transcript option when API fails
@@ -25,6 +26,46 @@ export default function Home() {
     setError(null)
 
     try {
+      if (mode === 'revision') {
+        // ── Revision Notes Mode ──────────────────────────────────────────
+        const response = await fetch('/api/process-revision', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            loomUrl,
+            manualTranscript: useManualTranscript ? transcript : null,
+          }),
+        })
+        const data = await response.json()
+        if (response.ok) {
+          try {
+            sessionStorage.setItem('revisionResults', JSON.stringify(data))
+          } catch {
+            // If quota exceeded, strip base64 images
+            try {
+              const slim = {
+                ...data,
+                revision_notes: data.revision_notes?.map((n: any) => ({
+                  ...n,
+                  screenshots: n.screenshots?.map((s: any) => ({ ...s, image_base64: undefined }))
+                }))
+              }
+              sessionStorage.setItem('revisionResults', JSON.stringify(slim))
+            } catch {}
+          }
+          await new Promise(resolve => setTimeout(resolve, 100))
+          router.push('/revision')
+        } else {
+          setError({
+            message: data.error || 'An error occurred while processing the video',
+            needsManualTranscript: data.needsManualTranscript,
+          })
+          setLoading(false)
+        }
+        return
+      }
+
+      // ── Task List Mode ───────────────────────────────────────────────
       const response = await fetch('/api/process-loom', {
         method: 'POST',
         headers: {
@@ -122,7 +163,9 @@ export default function Home() {
           <div className="inline-block w-16 h-16 mb-4">
             <div className="w-full h-full border-4 border-indigo-200 border-t-indigo-600 rounded-full animate-spin"></div>
           </div>
-          <h2 className="text-2xl font-semibold text-gray-900">Processing your Loom video...</h2>
+          <h2 className="text-2xl font-semibold text-gray-900">
+            {mode === 'revision' ? 'Generating Revision Notes...' : 'Processing your Loom video...'}
+          </h2>
           <p className="text-gray-600 mt-2">This may take a few minutes</p>
 
         </div>
@@ -138,7 +181,7 @@ export default function Home() {
             Loom Extraction App
           </h1>
           <p className="text-xl text-gray-600">
-            Turn your Loom video feedback into actionable tasks automatically
+            Turn your Loom video feedback into structured outputs automatically
           </p>
         </div>
 
@@ -194,6 +237,47 @@ export default function Home() {
         )}
 
         <div className="bg-white shadow-xl p-8 border border-gray-200">
+          {/* Mode Selector */}
+          <div className="mb-8">
+            <p className="text-sm font-semibold text-gray-700 mb-3">Select Mode</p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => { setMode('task'); setError(null) }}
+                className={`p-4 border-2 text-left transition-colors ${
+                  mode === 'task'
+                    ? 'border-indigo-600 bg-indigo-50'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <div className="text-2xl mb-1">📋</div>
+                <div className={`text-sm font-semibold ${ mode === 'task' ? 'text-indigo-700' : 'text-gray-800' }`}>
+                  Task List Mode
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Extract structured tasks, priorities &amp; assignments from feedback videos
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMode('revision'); setError(null) }}
+                className={`p-4 border-2 text-left transition-colors ${
+                  mode === 'revision'
+                    ? 'border-amber-500 bg-amber-50'
+                    : 'border-gray-200 bg-white hover:border-gray-300'
+                }`}
+              >
+                <div className="text-2xl mb-1">✏️</div>
+                <div className={`text-sm font-semibold ${ mode === 'revision' ? 'text-amber-700' : 'text-gray-800' }`}>
+                  Revision Notes Mode
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  Generate editor checklist with timestamped notes for promo/video review
+                </div>
+              </button>
+            </div>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="loomUrl" className="block text-sm font-medium text-gray-700 mb-2">
@@ -274,21 +358,40 @@ You can also paste plain text without timestamps - we'll assign them automatical
             <button
               type="submit"
               disabled={!loomUrl}
-              className="w-full bg-indigo-600 text-white py-4 px-6 font-semibold text-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              className={`w-full text-white py-4 px-6 font-semibold text-lg focus:outline-none focus:ring-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors ${
+                mode === 'revision'
+                  ? 'bg-amber-500 hover:bg-amber-600 focus:ring-amber-400'
+                  : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500'
+              }`}
             >
-              Process Video
+              {mode === 'revision' ? '✏️ Generate Revision Notes' : '📋 Extract Tasks'}
             </button>
           </form>
 
-          <div className="mt-8 p-4 bg-gray-100 border-l-4 border-indigo-600">
-            <h3 className="font-semibold text-gray-900 mb-3 text-lg">📖 How it works:</h3>
-            <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
-              <li><strong>Paste your Loom video URL</strong> - Just copy and paste the link</li>
-              <li><strong>Automatic transcript extraction</strong> - The app pulls the video transcript automatically</li>
-              <li><strong>AI analysis</strong> - AI identifies every task, change request, or feedback point</li>
-              <li><strong>Screenshot capture</strong> - Screenshots are captured at each timestamp with the time burned into the image</li>
-              <li><strong>Export as PDF</strong> - Get a professional PDF with clickable screenshots linking directly to the video moments</li>
-            </ol>
+          <div className={`mt-8 p-4 bg-gray-100 border-l-4 ${ mode === 'revision' ? 'border-amber-500' : 'border-indigo-600' }`}>
+            {mode === 'task' ? (
+              <>
+                <h3 className="font-semibold text-gray-900 mb-3 text-lg">📖 Task List Mode — How it works:</h3>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+                  <li><strong>Paste your Loom video URL</strong> - Just copy and paste the link</li>
+                  <li><strong>Automatic transcript extraction</strong> - The app pulls the video transcript automatically</li>
+                  <li><strong>AI analysis</strong> - AI identifies every task, change request, or feedback point</li>
+                  <li><strong>Screenshot capture</strong> - Screenshots are captured at each timestamp</li>
+                  <li><strong>Export as PDF</strong> - Get a professional PDF with clickable screenshots</li>
+                </ol>
+              </>
+            ) : (
+              <>
+                <h3 className="font-semibold text-gray-900 mb-3 text-lg">✏️ Revision Notes Mode — How it works:</h3>
+                <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+                  <li><strong>Paste your Loom review video URL</strong> - Record yourself watching and speaking notes</li>
+                  <li><strong>AI structures your notes</strong> - Separates global rules from timestamped revisions</li>
+                  <li><strong>Smart rewriting</strong> - Rough speech is converted to clear editor instructions</li>
+                  <li><strong>Screenshots captured</strong> - Frame extracted at each revision timestamp</li>
+                  <li><strong>Editor checklist generated</strong> - Mark revisions complete, edit notes, export PDF</li>
+                </ol>
+              </>
+            )}
           </div>
         </div>
       </div>
