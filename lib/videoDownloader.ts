@@ -64,14 +64,17 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
     // Download video using yt-dlp
     // Format priority:
     //   1. Direct HTTPS combined stream (fastest — no HLS segment overhead, e.g. Loom http-transcoded)
-    //   2. HLS video+audio merge at ≤720p
+    //   2. Best MP4 video+audio merge (non-HLS preferred)
     //   3. Any best format at ≤1080p
     //   4. Absolute fallback
+    // --no-part: prevents .part files left on disk which confuse the alt-file scan below
+    // --merge-output-format mp4: ensures final container is always .mp4
     console.log(`Downloading video: ${loomUrl}`)
     const command = [
       'yt-dlp',
       '--no-playlist',
-      '-f "best[protocol=https][height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best"',
+      '--no-part',
+      '-f "bestvideo[ext=mp4][height<=1080][protocol=https]+bestaudio[ext=m4a][protocol=https]/bestvideo[ext=mp4][height<=720]+bestaudio/best[ext=mp4][height<=1080]/best[height<=1080]/best"',
       '--merge-output-format mp4',
       `--output "${outputPath}"`,
       `"${loomUrl}"`,
@@ -85,19 +88,30 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
     console.log('Download stdout:', stdout)
     if (stderr) console.log('Download stderr:', stderr)
 
-    // yt-dlp sometimes outputs as .mp4 even if the template says otherwise; scan for the file
+    // Log what files exist in temp dir after download (diagnosis aid)
+    const allTempFiles = fs.readdirSync(tempDir).filter(f => f.startsWith(videoId))
+    console.log(`Files in temp dir after download (videoId prefix): ${allTempFiles.join(', ') || '(none)'}`)
+
+    // yt-dlp sometimes outputs as .mp4 even if the template says otherwise; scan for the file.
+    // IMPORTANT: exclude HLS intermediate fragments (contain '.fhls-' in filename) — these are
+    // temporary merge inputs that yt-dlp should have deleted, but if they exist they are NOT
+    // the final merged output and will produce broken MP4s for ffmpeg seeking.
     if (!fs.existsSync(outputPath)) {
-      // Look for any video file that yt-dlp may have named slightly differently
-      const tempDir = path.dirname(outputPath)
       const altFiles = fs.readdirSync(tempDir).filter(f =>
-        f.startsWith(path.basename(outputPath, '.mp4')) && /\.(mp4|mkv|webm)$/.test(f)
+        f.startsWith(path.basename(outputPath, '.mp4')) &&
+        /\.(mp4|mkv|webm)$/.test(f) &&
+        !f.includes('.fhls-') &&   // exclude HLS video fragments
+        !f.includes('.part')       // exclude partial downloads
       )
       if (altFiles.length > 0) {
         const altPath = path.join(tempDir, altFiles[0])
         console.log(`Video saved as alternate name, renaming: ${altPath} → ${outputPath}`)
         fs.renameSync(altPath, outputPath)
       } else {
-        throw new Error('Video file was not created')
+        // Log all temp files to help diagnose naming issues
+        const allFiles = fs.readdirSync(tempDir)
+        console.error(`Expected output not found. All temp files: ${allFiles.join(', ')}`)
+        throw new Error(`Video file was not created at ${outputPath}`)
       }
     }
 

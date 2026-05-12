@@ -111,6 +111,14 @@ export async function POST(request: NextRequest) {
     if (!videoPath) {
       throw new Error('Video path is not set')
     }
+
+    // Verify video file is accessible and log its size for diagnosis
+    try {
+      const videoStats = fs.statSync(videoPath)
+      console.log(`Video file ready: ${videoPath} (${(videoStats.size / 1024 / 1024).toFixed(1)} MB)`)
+    } catch (statErr: any) {
+      throw new Error(`Video file not accessible at ${videoPath}: ${statErr.message}`)
+    }
     
     // Helper function to limit concurrency (prevent Railway resource exhaustion)
     async function processWithConcurrencyLimit(
@@ -181,8 +189,8 @@ export async function POST(request: NextRequest) {
                   image_url: imageUrl,
                   image_base64: base64Image,
                 }
-              } catch (error) {
-                console.error(`  - ❌ ERROR at ${timestampSeconds}s`)
+              } catch (error: any) {
+                console.error(`  - ❌ ERROR at ${timestampSeconds}s: ${error?.message || String(error)}`)
                 return null
               }
             }
