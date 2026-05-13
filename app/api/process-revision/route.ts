@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
 import { extractFrame, secondsToTimestamp, getVideoDuration } from '@/lib/frameExtractor'
-import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
+import { parseManualTranscript, parseSubtitleFile, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptForRevision } from '@/lib/revisionProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import * as path from 'path'
@@ -51,9 +51,9 @@ export async function POST(request: NextRequest) {
       transcript = parseManualTranscript(manualTranscript)
     } else {
       try {
-        const subtitlePath = await downloadLoomSubtitles(loomUrl)
-        transcript = parseJsonSubtitles(subtitlePath)
-        console.log(`[Revision] Extracted ${transcript.length} transcript entries`)
+        const { path: subtitlePath, format } = await downloadLoomSubtitles(loomUrl)
+        transcript = parseSubtitleFile(subtitlePath, format)
+        console.log(`[Revision] Extracted ${transcript.length} transcript entries (format: ${format})`)
       } catch (error) {
         return NextResponse.json(
           {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
 import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
-import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
+import { parseManualTranscript, parseSubtitleFile, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptWithAI, generateVideoSummary } from '@/lib/aiProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import * as path from 'path'
@@ -62,9 +62,9 @@ export async function POST(request: NextRequest) {
       // Automatic transcript extraction
       console.log('Downloading and parsing automatic transcript...')
       try {
-        const subtitlePath = await downloadLoomSubtitles(loomUrl)
-        transcript = parseJsonSubtitles(subtitlePath)
-        console.log(`Automatically extracted ${transcript.length} transcript entries`)
+        const { path: subtitlePath, format } = await downloadLoomSubtitles(loomUrl)
+        transcript = parseSubtitleFile(subtitlePath, format)
+        console.log(`Automatically extracted ${transcript.length} transcript entries (format: ${format})`)
       } catch (error) {
         console.error('Error with automatic transcript:', error)
         return NextResponse.json(
