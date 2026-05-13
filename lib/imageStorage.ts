@@ -125,6 +125,36 @@ class ImageStorageManager {
     })
   }
 
+  async storeRevisionResults(data: any): Promise<void> {
+    if (!this.db) await this.init()
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.tasksStoreName], 'readwrite')
+      const store = transaction.objectStore(this.tasksStoreName)
+      // Preserve original videoId in a separate field, then use fixed key for lookup
+      const request = store.put({
+        ...data,
+        _originalVideoId: data.videoId,  // preserve for Loom URL generation
+        videoId: 'revision_latest',       // fixed key — must come AFTER spread
+        timestamp: Date.now(),
+      })
+      request.onsuccess = () => resolve()
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  async getRevisionResults(): Promise<any | null> {
+    if (!this.db) await this.init()
+
+    return new Promise((resolve, reject) => {
+      const transaction = this.db!.transaction([this.tasksStoreName], 'readonly')
+      const store = transaction.objectStore(this.tasksStoreName)
+      const request = store.get('revision_latest')
+      request.onsuccess = () => resolve(request.result || null)
+      request.onerror = () => reject(request.error)
+    })
+  }
+
   async clearOldData(maxAgeMs: number = 24 * 60 * 60 * 1000): Promise<void> {
     if (!this.db) await this.init()
 
@@ -315,4 +345,29 @@ export async function getProcessingResults(): Promise<any | null> {
     
     return null
   }
+}
+
+/**
+ * Store revision results in IndexedDB (avoids sessionStorage quota limits)
+ */
+export async function storeRevisionResults(data: any): Promise<void> {
+  await imageStorage.storeRevisionResults(data)
+}
+
+/**
+ * Retrieve revision results from IndexedDB, falling back to sessionStorage
+ */
+export async function getRevisionResults(): Promise<any | null> {
+  try {
+    const data = await imageStorage.getRevisionResults()
+    if (data) return data
+  } catch (e) {
+    console.warn('[ImageStorage] IndexedDB revision read failed, falling back to sessionStorage:', e)
+  }
+  // Fallback to sessionStorage
+  try {
+    const raw = sessionStorage.getItem('revisionResults')
+    if (raw) return JSON.parse(raw)
+  } catch {}
+  return null
 }

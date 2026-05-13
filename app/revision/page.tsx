@@ -76,30 +76,8 @@ export default function RevisionPage() {
 
   useEffect(() => {
     const loadData = async () => {
-      let data: any = null
-
-      // Try IndexedDB first (survives sessionStorage quota limits)
-      try {
-        const { imageStorage } = await import('@/lib/imageStorage')
-        await (imageStorage as any).init()
-        const idb: IDBDatabase = (imageStorage as any).db
-        data = await new Promise<any>((resolve, reject) => {
-          const tx = idb.transaction(['tasks'], 'readonly')
-          const req = tx.objectStore('tasks').get('revision_latest')
-          req.onsuccess = () => resolve(req.result || null)
-          req.onerror = () => reject(req.error)
-        })
-      } catch {
-        // IndexedDB unavailable — fall through to sessionStorage
-      }
-
-      // Fallback: sessionStorage
-      if (!data) {
-        try {
-          const raw = sessionStorage.getItem('revisionResults')
-          if (raw) data = JSON.parse(raw)
-        } catch {}
-      }
+      const { getRevisionResults } = await import('@/lib/imageStorage')
+      const data = await getRevisionResults()
 
       if (!data) {
         alert('No revision results found. Please process a video first.')
@@ -109,7 +87,7 @@ export default function RevisionPage() {
 
       setTitle(data.title || 'Revision Notes')
       setSummary(data.summary || '')
-      setVideoId(data.videoId || '')
+      setVideoId(data._originalVideoId || data.videoId || '')
       setLoomUrl(data.loomUrl || '')
       setGlobalNotes((data.global_notes || []).map((n: any, i: number) => ({ ...n, id: n.id ?? `g-${i}` })))
       setRevisionNotes((data.revision_notes || []).map((n: any, i: number) => ({ ...n, id: n.id ?? `r-${i}` })))

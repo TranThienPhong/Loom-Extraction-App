@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { storeProcessingResults } from '@/lib/imageStorage'
+import { storeProcessingResults, storeRevisionResults } from '@/lib/imageStorage'
 
 export default function Home() {
   const [loomUrl, setLoomUrl] = useState('')
@@ -38,24 +38,12 @@ export default function Home() {
         })
         const data = await response.json()
         if (response.ok) {
-          // DUAL STORAGE: IndexedDB first (large quota), sessionStorage as fallback
-          let storedOk = false
+          // Store in IndexedDB (survives sessionStorage quota limits)
           try {
-            // Store in IndexedDB using a generic revision key
-            const { imageStorage } = await import('@/lib/imageStorage')
-            await (imageStorage as any).init()
-            const idb: IDBDatabase = (imageStorage as any).db
-            await new Promise<void>((resolve, reject) => {
-              const tx = idb.transaction(['tasks'], 'readwrite')
-              tx.objectStore('tasks').put({ videoId: 'revision_latest', ...data, timestamp: Date.now() })
-              tx.oncomplete = () => resolve()
-              tx.onerror = () => reject(tx.error)
-            })
-            storedOk = true
+            await storeRevisionResults(data)
+            console.log('[App] ✅ Revision results stored in IndexedDB')
           } catch (idbErr) {
-            console.warn('[App] IndexedDB revision store failed:', idbErr)
-          }
-          if (!storedOk) {
+            console.warn('[App] IndexedDB revision store failed, falling back to sessionStorage:', idbErr)
             // Fallback: sessionStorage — strip base64 if too large
             try {
               sessionStorage.setItem('revisionResults', JSON.stringify(data))
@@ -72,8 +60,6 @@ export default function Home() {
               } catch {}
             }
           }
-          // Always also try sessionStorage (fast path for small payloads)
-          try { sessionStorage.setItem('revisionResults', JSON.stringify(data)) } catch {}
           await new Promise(resolve => setTimeout(resolve, 100))
           router.push('/revision')
         } else {
