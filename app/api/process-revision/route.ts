@@ -9,14 +9,17 @@ import * as fs from 'fs'
 
 export const maxDuration = 800
 
-// Ensure runtime directories exist
-;[
-  path.join(process.cwd(), 'temp'),
-  path.join(process.cwd(), 'public', 'temp', 'frames'),
-].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) })
-
 export async function POST(request: NextRequest) {
   let videoPath: string | null = null
+  let subtitlePath: string | null = null
+
+  // Ensure runtime directories exist (Railway ephemeral filesystem)
+  for (const dir of [
+    path.join(/*turbopackIgnore: true*/ process.cwd(), 'temp'),
+    path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames'),
+  ]) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  }
 
   try {
     const body = await request.json()
@@ -51,9 +54,10 @@ export async function POST(request: NextRequest) {
       transcript = parseManualTranscript(manualTranscript)
     } else {
       try {
-        const { path: subtitlePath, format } = await downloadLoomSubtitles(loomUrl)
-        transcript = parseSubtitleFile(subtitlePath, format)
-        console.log(`[Revision] Extracted ${transcript.length} transcript entries (format: ${format})`)
+        const subtitleResult = await downloadLoomSubtitles(loomUrl)
+        subtitlePath = subtitleResult.path
+        transcript = parseSubtitleFile(subtitlePath, subtitleResult.format)
+        console.log(`[Revision] Extracted ${transcript.length} transcript entries (format: ${subtitleResult.format})`)
       } catch (error) {
         return NextResponse.json(
           {
@@ -142,7 +146,7 @@ export async function POST(request: NextRequest) {
                 timestampSeconds: ts,
                 timestampLabel: tsLabel,
               })
-              const relPath = path.relative(path.join(process.cwd(), 'public'), framePath)
+              const relPath = path.relative(path.join(/*turbopackIgnore: true*/ process.cwd(), 'public'), framePath)
               const imageUrl = '/' + relPath.replace(/\\/g, '/')
 
               let base64Image = ''
@@ -197,6 +201,9 @@ export async function POST(request: NextRequest) {
   } finally {
     if (videoPath) {
       try { cleanupVideo(videoPath) } catch {}
+    }
+    if (subtitlePath) {
+      try { fs.unlinkSync(subtitlePath) } catch {}
     }
   }
 }

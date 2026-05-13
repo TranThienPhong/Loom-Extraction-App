@@ -9,14 +9,17 @@ import * as fs from 'fs'
 
 export const maxDuration = 800 // ~13 minutes - supports long videos (30+ min)
 
-// Ensure runtime directories exist (Railway starts with empty ephemeral filesystem)
-;[
-  path.join(process.cwd(), 'temp'),
-  path.join(process.cwd(), 'public', 'temp', 'frames'),
-].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) })
-
 export async function POST(request: NextRequest) {
   let videoPath: string | null = null
+  let subtitlePath: string | null = null
+
+  // Ensure runtime directories exist (Railway ephemeral filesystem)
+  for (const dir of [
+    path.join(/*turbopackIgnore: true*/ process.cwd(), 'temp'),
+    path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames'),
+  ]) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  }
 
   try {
     const body = await request.json()
@@ -62,9 +65,10 @@ export async function POST(request: NextRequest) {
       // Automatic transcript extraction
       console.log('Downloading and parsing automatic transcript...')
       try {
-        const { path: subtitlePath, format } = await downloadLoomSubtitles(loomUrl)
-        transcript = parseSubtitleFile(subtitlePath, format)
-        console.log(`Automatically extracted ${transcript.length} transcript entries (format: ${format})`)
+        const subtitleResult = await downloadLoomSubtitles(loomUrl)
+        subtitlePath = subtitleResult.path
+        transcript = parseSubtitleFile(subtitlePath, subtitleResult.format)
+        console.log(`Automatically extracted ${transcript.length} transcript entries (format: ${subtitleResult.format})`)
       } catch (error) {
         console.error('Error with automatic transcript:', error)
         return NextResponse.json(
@@ -259,5 +263,9 @@ export async function POST(request: NextRequest) {
       },
       { status: 500 }
     )
+  } finally {
+    if (subtitlePath) {
+      try { fs.unlinkSync(subtitlePath) } catch {}
+    }
   }
 }
