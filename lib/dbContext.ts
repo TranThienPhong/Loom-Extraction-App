@@ -87,6 +87,12 @@ export function formatDBContextForPrompt(ctx: DBContext): string {
   if (ctx.projects.length) lines.push(`PROJECTS: ${ctx.projects.join(' | ')}`)
   if (ctx.areas.length) lines.push(`AREAS: ${ctx.areas.join(', ')}`)
   if (ctx.users.length) lines.push(`USERS: ${ctx.users.join(', ')}`)
+  if (ctx.users.length) lines.push(
+    'ASSIGNEE MATCHING: The transcript is auto-transcribed and names are often mispronounced or misspelled. ' +
+    'Match any name in the transcript to the closest USERS entry by sound or spelling similarity. ' +
+    'Examples: "Jonas", "Jaunas", "Yaunius" → Jaunius | "Foam", "Phone", "Fong", "Pong" → Phong | ' +
+    'Always prefer a real USERS name over the raw transcript text.'
+  )
   lines.push('--- END REFERENCE DATABASE ---')
   return lines.join('\n')
 }

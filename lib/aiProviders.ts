@@ -234,6 +234,7 @@ Instructions:
    - First try to extract them from the transcript
    - If the transcript does NOT mention a value, pick the BEST matching option from the Reference Database above (if provided)
    - Leave empty ONLY if there is truly no reasonable match in either the transcript or the database
+   - **ASSIGNEE — CRITICAL**: The transcript is auto-transcribed so names are frequently garbled. Always fuzzy-match spoken names to the closest entry in USERS by phonetic similarity or spelling. Examples: "Jonas" / "Jaunas" / "Yaunius" → Jaunius | "Foam" / "Phone" / "Fong" / "Pong" → Phong. Never leave the raw mispelled transcript name — always resolve to a real USERS entry if one is a plausible match.
 7. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default 3.0 if not stated.
 8. Complexity: one of "SupC" (Super Complex), "COMP" (Complex), "MOD" (Moderate), "SIMP" (Simple)
 9. Task Type: "Need-to-have" if the speaker explicitly marks it as urgent, must-do today, blocking, or critical. "Nice-to-have" for everything else — including tasks that are not mentioned as urgent, low-priority suggestions, or improvements with no stated deadline.
