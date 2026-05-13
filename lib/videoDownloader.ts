@@ -125,9 +125,9 @@ export function cleanupVideo(videoPath: string): void {
 
 /**
  * Downloads subtitles for a Loom video using yt-dlp
- * Returns the path to the subtitle JSON file
+ * Returns the path to the subtitle file and its format ('json' | 'vtt')
  */
-export async function downloadLoomSubtitles(loomUrl: string): Promise<string> {
+export async function downloadLoomSubtitles(loomUrl: string): Promise<{ path: string; format: 'json' | 'vtt' }> {
   // Check if yt-dlp is installed
   const ytDlpInstalled = await checkYtDlpInstalled()
   if (!ytDlpInstalled) {
@@ -152,35 +152,61 @@ export async function downloadLoomSubtitles(loomUrl: string): Promise<string> {
     fs.mkdirSync(tempDir, { recursive: true })
   }
 
-  const subtitlePath = path.join(tempDir, `${videoId}.en.json`)
+  const jsonPath = path.join(tempDir, `${videoId}.en.json`)
+  const vttPath  = path.join(tempDir, `${videoId}.en.vtt`)
 
-  // Check if subtitles already exist
-  if (fs.existsSync(subtitlePath)) {
-    console.log('Subtitles already downloaded, using cached version')
-    return subtitlePath
+  // Return cached files if they exist
+  if (fs.existsSync(jsonPath)) {
+    console.log('Subtitles (JSON) already downloaded, using cached version')
+    return { path: jsonPath, format: 'json' }
+  }
+  if (fs.existsSync(vttPath)) {
+    console.log('Subtitles (VTT) already downloaded, using cached version')
+    return { path: vttPath, format: 'vtt' }
   }
 
+  const baseOutput = path.join(tempDir, videoId)
+
+  // Attempt 1: JSON format (Loom native)
   try {
-    // Download subtitles using yt-dlp
-    console.log(`Downloading subtitles: ${loomUrl}`)
-    const command = `yt-dlp --write-subs --sub-format json --skip-download -o "${path.join(tempDir, videoId)}" "${loomUrl}"`
-    
-    const { stdout, stderr } = await execAsync(command, {
-      maxBuffer: 1024 * 1024 * 10,
-      timeout: 60000, // 1 minute timeout
-    })
-
-    console.log('Subtitle download stdout:', stdout)
-    if (stderr) console.error('Subtitle download stderr:', stderr)
-
-    if (!fs.existsSync(subtitlePath)) {
-      throw new Error('Subtitle file was not created')
+    console.log(`Downloading subtitles (JSON): ${loomUrl}`)
+    const cmd = `yt-dlp --write-subs --sub-format json --skip-download -o "${baseOutput}" "${loomUrl}"`
+    const { stderr } = await execAsync(cmd, { maxBuffer: 1024 * 1024 * 10, timeout: 60000 })
+    if (stderr) console.warn('Subtitle JSON stderr:', stderr)
+    if (fs.existsSync(jsonPath)) {
+      console.log('Subtitles downloaded as JSON')
+      return { path: jsonPath, format: 'json' }
     }
-
-    console.log(`Subtitles downloaded successfully: ${subtitlePath}`)
-    return subtitlePath
-  } catch (error) {
-    console.error('Error downloading subtitles:', error)
-    throw new Error(`Failed to download subtitles: ${error instanceof Error ? error.message : String(error)}`)
+    // yt-dlp may write without language suffix — check alternate name
+    const altJson = path.join(tempDir, `${videoId}.json`)
+    if (fs.existsSync(altJson)) {
+      fs.renameSync(altJson, jsonPath)
+      return { path: jsonPath, format: 'json' }
+    }
+  } catch (err: any) {
+    console.warn('JSON subtitle download failed, trying VTT:', err.message)
   }
+
+  // Attempt 2: VTT format (auto-subs fallback)
+  try {
+    console.log(`Downloading subtitles (VTT): ${loomUrl}`)
+    const cmd = `yt-dlp --write-subs --write-auto-subs --sub-langs en --sub-format vtt --skip-download -o "${baseOutput}" "${loomUrl}"`
+    const { stderr } = await execAsync(cmd, { maxBuffer: 1024 * 1024 * 10, timeout: 60000 })
+    if (stderr) console.warn('Subtitle VTT stderr:', stderr)
+    if (fs.existsSync(vttPath)) {
+      console.log('Subtitles downloaded as VTT')
+      return { path: vttPath, format: 'vtt' }
+    }
+    // Scan for any .vtt file created by yt-dlp
+    const anyVtt = fs.readdirSync(tempDir).find(f => f.startsWith(videoId) && f.endsWith('.vtt'))
+    if (anyVtt) {
+      const found = path.join(tempDir, anyVtt)
+      fs.renameSync(found, vttPath)
+      return { path: vttPath, format: 'vtt' }
+    }
+  } catch (err: any) {
+    console.warn('VTT subtitle download also failed:', err.message)
+  }
+
+  throw new Error('Could not download subtitles in any supported format (json, vtt). The video may not have captions.')
 }

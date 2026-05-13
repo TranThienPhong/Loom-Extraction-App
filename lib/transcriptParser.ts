@@ -150,6 +150,61 @@ export function parseJsonSubtitles(subtitlePath: string): TranscriptEntry[] {
 }
 
 /**
+ * Parses WebVTT subtitle format downloaded via yt-dlp
+ * Handles standard VTT and yt-dlp's VTT with position/align tags
+ */
+export function parseVttSubtitles(subtitlePath: string): TranscriptEntry[] {
+  try {
+    const content = fs.readFileSync(subtitlePath, 'utf-8')
+    const entries: TranscriptEntry[] = []
+
+    // Split on blank lines to get cue blocks
+    const blocks = content.split(/\n{2,}/)
+    for (const block of blocks) {
+      const lines = block.trim().split('\n')
+      // Find the timing line: 00:00:00.000 --> 00:00:05.000
+      const timingIdx = lines.findIndex(l => l.includes('-->'))
+      if (timingIdx === -1) continue
+      const timingLine = lines[timingIdx]
+      const timingMatch = timingLine.match(/(\d{2}):(\d{2}):(\d{2})[\.,](\d+)\s*-->/)
+      if (!timingMatch) continue
+
+      const h = parseInt(timingMatch[1], 10)
+      const m = parseInt(timingMatch[2], 10)
+      const s = parseInt(timingMatch[3], 10)
+      const totalSeconds = h * 3600 + m * 60 + s
+
+      // Text is everything after the timing line, stripped of VTT tags
+      const rawText = lines.slice(timingIdx + 1).join(' ')
+        .replace(/<[^>]+>/g, '')  // remove HTML/VTT tags like <c>, <b>, <00:00:01.000>
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+        .trim()
+
+      if (rawText) {
+        entries.push({
+          timestamp_seconds: totalSeconds,
+          timestamp_label: secondsToTimestamp(totalSeconds),
+          text: rawText,
+        })
+      }
+    }
+
+    return entries
+  } catch (error) {
+    console.error('Error parsing VTT subtitles:', error)
+    throw new Error(`Failed to parse VTT subtitles: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+/**
+ * Parses a subtitle file based on its format.
+ * Unified entry point for both routes.
+ */
+export function parseSubtitleFile(subtitlePath: string, format: 'json' | 'vtt'): TranscriptEntry[] {
+  return format === 'vtt' ? parseVttSubtitles(subtitlePath) : parseJsonSubtitles(subtitlePath)
+}
+
+/**
  * Generates Loom URL with timestamp
  */
 export function generateLoomUrlWithTimestamp(videoId: string, timestampSeconds: number): string {

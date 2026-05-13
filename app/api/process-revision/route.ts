@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
 import { extractFrame, secondsToTimestamp, getVideoDuration } from '@/lib/frameExtractor'
-import { parseManualTranscript, parseJsonSubtitles, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
+import { parseManualTranscript, parseSubtitleFile, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptForRevision } from '@/lib/revisionProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import * as path from 'path'
@@ -9,14 +9,17 @@ import * as fs from 'fs'
 
 export const maxDuration = 800
 
-// Ensure runtime directories exist
-;[
-  path.join(process.cwd(), 'temp'),
-  path.join(process.cwd(), 'public', 'temp', 'frames'),
-].forEach(dir => { if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true }) })
-
 export async function POST(request: NextRequest) {
   let videoPath: string | null = null
+  let subtitlePath: string | null = null
+
+  // Ensure runtime directories exist (Railway ephemeral filesystem)
+  for (const dir of [
+    path.join(/*turbopackIgnore: true*/ process.cwd(), 'temp'),
+    path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames'),
+  ]) {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+  }
 
   try {
     const body = await request.json()
@@ -51,9 +54,10 @@ export async function POST(request: NextRequest) {
       transcript = parseManualTranscript(manualTranscript)
     } else {
       try {
-        const subtitlePath = await downloadLoomSubtitles(loomUrl)
-        transcript = parseJsonSubtitles(subtitlePath)
-        console.log(`[Revision] Extracted ${transcript.length} transcript entries`)
+        const subtitleResult = await downloadLoomSubtitles(loomUrl)
+        subtitlePath = subtitleResult.path
+        transcript = parseSubtitleFile(subtitlePath, subtitleResult.format)
+        console.log(`[Revision] Extracted ${transcript.length} transcript entries (format: ${subtitleResult.format})`)
       } catch (error) {
         return NextResponse.json(
           {
@@ -120,7 +124,7 @@ export async function POST(request: NextRequest) {
           const clampedMax = Math.max(0, videoDuration - 2)
           const before = timestamps.length
           timestamps = timestamps
-            .map(ts => Math.min(ts, clampedMax))
+            .map(ts => Math.floor(Math.min(ts, clampedMax)))  // floor to integer — avoids float filenames
             // Deduplicate after clamping
             .filter((ts, idx, arr) => arr.indexOf(ts) === idx)
           if (timestamps.length < before) {
@@ -142,7 +146,7 @@ export async function POST(request: NextRequest) {
                 timestampSeconds: ts,
                 timestampLabel: tsLabel,
               })
-              const relPath = path.relative(path.join(process.cwd(), 'public'), framePath)
+              const relPath = path.relative(path.join(/*turbopackIgnore: true*/ process.cwd(), 'public'), framePath)
               const imageUrl = '/' + relPath.replace(/\\/g, '/')
 
               let base64Image = ''
@@ -150,7 +154,9 @@ export async function POST(request: NextRequest) {
                 const buf = fs.readFileSync(framePath)
                 base64Image = `data:image/jpeg;base64,${buf.toString('base64')}`
                 try { fs.unlinkSync(framePath) } catch {}
-              } catch {}
+              } catch (e: any) {
+                console.error(`[Revision] ❌ Failed to read frame at ${framePath}:`, e.message)
+              }
 
               return {
                 timestamp_seconds: ts,
@@ -195,6 +201,9 @@ export async function POST(request: NextRequest) {
   } finally {
     if (videoPath) {
       try { cleanupVideo(videoPath) } catch {}
+    }
+    if (subtitlePath) {
+      try { fs.unlinkSync(subtitlePath) } catch {}
     }
   }
 }

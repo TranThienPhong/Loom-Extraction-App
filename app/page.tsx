@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { storeProcessingResults } from '@/lib/imageStorage'
+import { storeProcessingResults, storeRevisionResults } from '@/lib/imageStorage'
 
 export default function Home() {
   const [loomUrl, setLoomUrl] = useState('')
@@ -38,20 +38,27 @@ export default function Home() {
         })
         const data = await response.json()
         if (response.ok) {
+          // Store in IndexedDB (survives sessionStorage quota limits)
           try {
-            sessionStorage.setItem('revisionResults', JSON.stringify(data))
-          } catch {
-            // If quota exceeded, strip base64 images
+            await storeRevisionResults(data)
+            console.log('[App] ✅ Revision results stored in IndexedDB')
+          } catch (idbErr) {
+            console.warn('[App] IndexedDB revision store failed, falling back to sessionStorage:', idbErr)
+            // Fallback: sessionStorage — strip base64 if too large
             try {
-              const slim = {
-                ...data,
-                revision_notes: data.revision_notes?.map((n: any) => ({
-                  ...n,
-                  screenshots: n.screenshots?.map((s: any) => ({ ...s, image_base64: undefined }))
-                }))
-              }
-              sessionStorage.setItem('revisionResults', JSON.stringify(slim))
-            } catch {}
+              sessionStorage.setItem('revisionResults', JSON.stringify(data))
+            } catch {
+              try {
+                const slim = {
+                  ...data,
+                  revision_notes: data.revision_notes?.map((n: any) => ({
+                    ...n,
+                    screenshots: n.screenshots?.map((s: any) => ({ ...s, image_base64: undefined }))
+                  }))
+                }
+                sessionStorage.setItem('revisionResults', JSON.stringify(slim))
+              } catch {}
+            }
           }
           await new Promise(resolve => setTimeout(resolve, 100))
           router.push('/revision')

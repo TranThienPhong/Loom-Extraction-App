@@ -69,7 +69,7 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   const frameDir = outputDir || path.join(/*turbopackIgnore: true*/ process.cwd(), 'public', 'temp', 'frames')
   
   // Ensure parent directories exist
-  const publicDir = path.join(process.cwd(), 'public')
+  const publicDir = path.join(/*turbopackIgnore: true*/ process.cwd(), 'public')
   const tempDir = path.join(publicDir, 'temp')
   
   if (!fs.existsSync(publicDir)) {

@@ -75,25 +75,27 @@ export default function RevisionPage() {
   }, [lightboxImage, lightboxIndex, lightboxScreenshots])
 
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem('revisionResults')
-      if (!raw) {
+    const loadData = async () => {
+      const { getRevisionResults } = await import('@/lib/imageStorage')
+      const data = await getRevisionResults()
+
+      if (!data) {
         alert('No revision results found. Please process a video first.')
         router.push('/')
         return
       }
-      const data = JSON.parse(raw)
+
       setTitle(data.title || 'Revision Notes')
       setSummary(data.summary || '')
-      setVideoId(data.videoId || '')
+      setVideoId(data._originalVideoId || data.videoId || '')
       setLoomUrl(data.loomUrl || '')
       setGlobalNotes((data.global_notes || []).map((n: any, i: number) => ({ ...n, id: n.id ?? `g-${i}` })))
       setRevisionNotes((data.revision_notes || []).map((n: any, i: number) => ({ ...n, id: n.id ?? `r-${i}` })))
       setTranscript(data.transcript || [])
       setLoaded(true)
-    } catch {
-      router.push('/')
     }
+
+    loadData().catch(() => router.push('/'))
   }, [router])
 
   // ── helpers ──────────────────────────────────────────────────────────────
