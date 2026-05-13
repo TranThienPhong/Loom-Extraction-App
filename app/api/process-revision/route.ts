@@ -120,7 +120,7 @@ export async function POST(request: NextRequest) {
           const clampedMax = Math.max(0, videoDuration - 2)
           const before = timestamps.length
           timestamps = timestamps
-            .map(ts => Math.min(ts, clampedMax))
+            .map(ts => Math.floor(Math.min(ts, clampedMax)))  // floor to integer — avoids float filenames
             // Deduplicate after clamping
             .filter((ts, idx, arr) => arr.indexOf(ts) === idx)
           if (timestamps.length < before) {
@@ -150,7 +150,9 @@ export async function POST(request: NextRequest) {
                 const buf = fs.readFileSync(framePath)
                 base64Image = `data:image/jpeg;base64,${buf.toString('base64')}`
                 try { fs.unlinkSync(framePath) } catch {}
-              } catch {}
+              } catch (e: any) {
+                console.error(`[Revision] ❌ Failed to read frame at ${framePath}:`, e.message)
+              }
 
               return {
                 timestamp_seconds: ts,
