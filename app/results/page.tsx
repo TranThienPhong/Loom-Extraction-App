@@ -661,7 +661,20 @@ export default function Results() {
     // Section: Table
     tocRow('Task Summary Table', tableStartPage, 2, true)
 
-    doc.save('loom-tasks.pdf')
+    // Build a meaningful filename from the first task name
+    const toSlug = (text: string, maxWords = 4) => {
+      const stopWords = new Set(['a','an','the','and','or','but','in','on','at','to','for','of','with','by','from','is','are','was','be','has','have','do','did','not','as','it','this','that','we','they','you','can','will','need'])
+      return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopWords.has(w))
+        .slice(0, maxWords)
+        .join('-') || 'tasks'
+    }
+    const titleSlug = tasks.length > 0 ? toSlug(tasks[0].task_name) : 'tasks'
+    const dateSlug = new Date().toISOString().slice(0, 10)
+    doc.save(`loom-tasks-${titleSlug}-${dateSlug}.pdf`)
   }
 
   if (tasks.length === 0) {

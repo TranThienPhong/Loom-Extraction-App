@@ -410,7 +410,20 @@ export default function RevisionPage() {
       tocRow(`${i + 1}.  [${revisionNotes[i].timestamp_label}]  ${revisionNotes[i].note}`, notePageNums[i], 2)
     }
 
-    doc.save(`revision-notes-${new Date().toISOString().slice(0, 10)}.pdf`)
+    // Build a meaningful filename from the AI-generated title
+    const toSlug = (text: string, maxWords = 4) => {
+      const stopWords = new Set(['a','an','the','and','or','but','in','on','at','to','for','of','with','by','from','is','are','was','be','has','have','do','did','not','as','it','this','that','we','they','you','can','will','need'])
+      return text
+        .toLowerCase()
+        .replace(/[^a-z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length > 2 && !stopWords.has(w))
+        .slice(0, maxWords)
+        .join('-') || 'revision'
+    }
+    const titleSlug = title ? toSlug(title) : 'revision'
+    const dateSlug = new Date().toISOString().slice(0, 10)
+    doc.save(`revision-${titleSlug}-${dateSlug}.pdf`)
   }
 
   // ── DOCX export ───────────────────────────────────────────────────────────
