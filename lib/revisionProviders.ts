@@ -21,6 +21,7 @@ export interface RevisionNote {
   timestamp_label: string
   referenced_timestamp_seconds?: number | null
   referenced_timestamp_label?: string | null
+  title: string
   note: string
   raw_speech?: string
   completed: boolean
@@ -106,6 +107,7 @@ Instructions:
 4. **Timestamped Revision Notes**: Specific fixes tied to exact moments in the video.
    - "timestamp_seconds" / "timestamp_label": When the reviewer SPOKE these words in the Loom recording (e.g., 4:46).
    - "referenced_timestamp_seconds" / "referenced_timestamp_label": The timestamp in the VIDEO BEING REVIEWED that needs to be fixed (e.g., if the reviewer says "fix it at the 9:48 mark", this would be 9:48). Extract this from the reviewer's speech. Set to null if no specific timestamp is referenced.
+   - "title": A very short (3-6 words max) bold title summarizing the issue. Examples: "ReRender AI Video Avatar", "Change Voice Intro Tone", "Fix Logo Background Color". Must be action-oriented and specific. No punctuation at end.
    
 5. **AI Cleanup — CRITICAL**: Convert rough, unclear speech into precise, professional editor instructions.
    Before/After examples:
@@ -133,7 +135,8 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no extra
       "timestamp_label": "<M:SS - when reviewer spoke this>",
       "referenced_timestamp_seconds": <timestamp in the video being reviewed that needs fixing, or null>,
       "referenced_timestamp_label": "<M:SS of the fix location in the reviewed video, or null>",
-      "note": "<clean, professional editor instruction>",
+      "title": "<3-6 word bold title for this revision, e.g. 'ReRender AI Video Avatar'>",
+      "note": "<clean, professional editor instruction — detailed description>",
       "raw_speech": "<verbatim original speech from transcript>",
       "screenshot_timestamps": [<1-3 timestamp numbers as integers>]
     }
@@ -182,6 +185,7 @@ function parseRevisionResponse(text: string): RevisionAnalysisResult {
         timestamp_label: n.timestamp_label || '0:00',
         referenced_timestamp_seconds: typeof n.referenced_timestamp_seconds === 'number' ? n.referenced_timestamp_seconds : null,
         referenced_timestamp_label: n.referenced_timestamp_label || null,
+        title: n.title || '',
         note: n.note || '',
         raw_speech: n.raw_speech || '',
         completed: false,
