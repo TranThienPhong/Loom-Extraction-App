@@ -115,9 +115,11 @@ export async function POST(request: NextRequest) {
       revisionResult.revision_notes,
       1,
       async (note) => {
-        let timestamps = note.screenshot_timestamps?.length
-          ? note.screenshot_timestamps
-          : [note.timestamp_seconds]
+        // ALWAYS use note.timestamp_seconds (when the reviewer was speaking in the Loom).
+        // Do NOT use screenshot_timestamps from AI — those may reference the *reviewed video*'s
+        // timestamps (e.g. "59 second mark") which are completely different positions in the Loom.
+        // Using note.timestamp_seconds guarantees each note gets a unique, correctly-timed frame.
+        let timestamps = [note.timestamp_seconds]
 
         // Clamp timestamps to video duration (prevents ffmpeg failures at end of video)
         if (videoDuration) {

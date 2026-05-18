@@ -23,6 +23,7 @@ interface RevisionNote {
   timestamp_label: string
   referenced_timestamp_seconds?: number | null
   referenced_timestamp_label?: string | null
+  title?: string
   note: string
   raw_speech?: string
   completed: boolean
@@ -213,8 +214,8 @@ export default function RevisionPage() {
       doc.setFontSize(8); doc.setFont('helvetica', 'bold'); doc.setTextColor(20, 20, 60)
       doc.text(`${i + 1}.`, mL + 2, y)
       doc.setFont('helvetica', 'normal'); doc.setTextColor(20, 20, 20)
-      const label = doc.splitTextToSize(n.note, cW - 42)
-      doc.text(label[0], mL + 10, y)
+      const coverLabel = doc.splitTextToSize(n.title || n.note, cW - 42)
+      doc.text(coverLabel[0], mL + 10, y)
       doc.setTextColor(40, 80, 180)
       if (url) doc.textWithLink(n.timestamp_label, pageW - mR - doc.getTextWidth(n.timestamp_label), y, { url })
       else doc.text(n.timestamp_label, pageW - mR - doc.getTextWidth(n.timestamp_label), y)
@@ -256,7 +257,8 @@ export default function RevisionPage() {
       doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(120, 90, 20)
       doc.text(`REVISION ${i + 1} OF ${revisionNotes.length}${note.completed ? '  ✓ COMPLETED' : ''}`, mL + 3, y + 5)
       doc.setFontSize(13); doc.setFont('helvetica', 'bold'); doc.setTextColor(10, 15, 70)
-      const hLines = doc.splitTextToSize(note.note, cW - 8)
+      const headerText = note.title ? `#${i + 1} ${note.title}` : note.note
+      const hLines = doc.splitTextToSize(headerText, cW - 8)
       doc.text(hLines[0], mL + 3, y + 13)
       if (hLines[1]) doc.text(hLines[1], mL + 3, y + 19)
       y += 26
@@ -407,7 +409,7 @@ export default function RevisionPage() {
     doc.text('TIMESTAMPED REVISIONS', mL, y); y += 5
     for (let i = 0; i < revisionNotes.length; i++) {
       if (y > pageH - 15) break
-      tocRow(`${i + 1}.  [${revisionNotes[i].timestamp_label}]  ${revisionNotes[i].note}`, notePageNums[i], 2)
+      tocRow(`${i + 1}.  [${revisionNotes[i].timestamp_label}]  ${revisionNotes[i].title || revisionNotes[i].note}`, notePageNums[i], 2)
     }
 
     // Build a meaningful filename from the AI-generated title
@@ -469,7 +471,7 @@ export default function RevisionPage() {
 
     if (revisionNotes.length > 0) {
       children.push(new Paragraph({ text: 'Timestamped Revision Notes', heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 120 } }))
-      for (const note of revisionNotes) {
+      for (const [noteIdx, note] of revisionNotes.entries()) {
         const tsChildren: any[] = [
           new TextRun({ text: `[${note.timestamp_label}]  `, bold: true, color: note.completed ? '888888' : '2244AA', size: 20 }),
         ]
@@ -480,7 +482,15 @@ export default function RevisionPage() {
           }))
         }
         children.push(new Paragraph({ children: tsChildren, spacing: { before: 200, after: 60 } }))
-        // Unicode checkbox
+        // Bold title line
+        if (note.title) {
+          children.push(new Paragraph({
+            children: [new TextRun({ text: `#${noteIdx + 1} ${note.title}`, bold: true, size: 22, color: note.completed ? '888888' : '111111' })],
+            spacing: { before: 20, after: 40 },
+            indent: { left: 360 },
+          }))
+        }
+        // Unicode checkbox + description
         children.push(new Paragraph({
           children: [new TextRun({ text: `${note.completed ? '☑' : '☐'}  ${note.note}`, size: 20, strike: note.completed, color: note.completed ? '888888' : '111111' })],
           spacing: { before: 20, after: 60 },
@@ -651,7 +661,7 @@ export default function RevisionPage() {
 
         {/* ── Filter tabs ── */}
         <div className="flex border-b-2 border-gray-200 mb-6 bg-white">
-          {(['all', 'pending', 'completed', 'global'] as FilterType[]).map(f => (
+          {(['all', 'global', 'pending', 'completed'] as FilterType[]).map(f => (
             <button
               key={f}
               onClick={() => setFilter(f)}
@@ -662,9 +672,9 @@ export default function RevisionPage() {
               }`}
             >
               {f === 'all' ? `All (${totalCount})` :
+               f === 'global' ? `Global Notes (${globalNotes.length})` :
                f === 'pending' ? `Timestamps Notes (${revisionPendingCount})` :
-               f === 'completed' ? `Completed (${revisionCompletedCount})` :
-               `Global Notes (${globalNotes.length})`}
+               `Completed (${revisionCompletedCount})`}
             </button>
           ))}
         </div>
@@ -804,7 +814,12 @@ export default function RevisionPage() {
                               </div>
                             ) : (
                               <>
-                                <p className={`text-gray-700 leading-relaxed ${note.completed ? 'line-through text-gray-400' : ''}`}>
+                                {note.title && (
+                                  <p className={`text-base font-bold mb-1 ${note.completed ? 'line-through text-gray-400' : 'text-gray-900'}`}>
+                                    #{idx + 1} {note.title}
+                                  </p>
+                                )}
+                                <p className={`text-gray-700 leading-relaxed whitespace-pre-line ${note.completed ? 'line-through text-gray-400' : ''}`}>
                                   {note.note}
                                 </p>
                                 {note.raw_speech && note.raw_speech !== note.note && (
