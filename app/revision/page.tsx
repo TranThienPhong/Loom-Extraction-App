@@ -50,6 +50,12 @@ export default function RevisionPage() {
   const [lightboxScreenshots, setLightboxScreenshots] = useState<RevisionScreenshot[]>([])
   const [lightboxIndex, setLightboxIndex] = useState(0)
 
+  // Save & Share
+  const [savingSession, setSavingSession] = useState(false)
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [copySuccess, setCopySuccess] = useState(false)
+
   // Keyboard nav for lightbox
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
@@ -121,6 +127,42 @@ export default function RevisionPage() {
   const markAllPending = () => {
     setGlobalNotes(prev => prev.map(n => ({ ...n, completed: false })))
     setRevisionNotes(prev => prev.map(n => ({ ...n, completed: false })))
+  }
+
+  const handleSaveAndShare = async () => {
+    setSavingSession(true)
+    try {
+      const res = await fetch('/api/review-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title,
+          summary,
+          loom_url: loomUrl,
+          video_id: videoId,
+          global_notes: globalNotes,
+          revision_notes: revisionNotes,
+          transcript,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to save session')
+      const { id } = await res.json()
+      const url = `${window.location.origin}/review/${id}`
+      setShareUrl(url)
+      setShowShareModal(true)
+    } catch (err: any) {
+      alert(`Failed to save review session: ${err.message}`)
+    } finally {
+      setSavingSession(false)
+    }
+  }
+
+  const handleCopyShareUrl = () => {
+    if (!shareUrl) return
+    navigator.clipboard?.writeText(shareUrl).then(() => {
+      setCopySuccess(true)
+      setTimeout(() => setCopySuccess(false), 2000)
+    }).catch(() => {})
   }
 
   const openLightbox = (screenshots: RevisionScreenshot[], index: number) => {
@@ -216,8 +258,9 @@ export default function RevisionPage() {
       const label = doc.splitTextToSize(n.note, cW - 42)
       doc.text(label[0], mL + 10, y)
       doc.setTextColor(40, 80, 180)
-      if (url) doc.textWithLink(n.timestamp_label, pageW - mR - doc.getTextWidth(n.timestamp_label), y, { url })
-      else doc.text(n.timestamp_label, pageW - mR - doc.getTextWidth(n.timestamp_label), y)
+      const displayLabel = n.referenced_timestamp_label || n.timestamp_label
+      if (url) doc.textWithLink(displayLabel, pageW - mR - doc.getTextWidth(displayLabel), y, { url })
+      else doc.text(displayLabel, pageW - mR - doc.getTextWidth(displayLabel), y)
       y += 6
     }
 
@@ -264,7 +307,7 @@ export default function RevisionPage() {
       doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(60, 60, 80)
       doc.text('Timestamp:', mL, y)
       doc.setFont('helvetica', 'normal'); doc.setTextColor(20, 20, 20)
-      doc.text(note.timestamp_label, mL + 26, y); y += 6
+      doc.text(note.referenced_timestamp_label || note.timestamp_label, mL + 26, y); y += 6
 
       if (noteUrl) {
         doc.setFont('helvetica', 'bold'); doc.setTextColor(60, 60, 80)
@@ -304,12 +347,13 @@ export default function RevisionPage() {
           if (y + imgH + 20 > pageH - 20) {
             doc.addPage(); y = 12
             doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(110, 110, 160)
-            doc.text(`Revision ${i + 1} continued — ${note.timestamp_label}`, mL, y); y += 8
+            doc.text(`Revision ${i + 1} continued — ${note.referenced_timestamp_label || note.timestamp_label}`, mL, y); y += 8
           }
 
           doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(90, 90, 110)
+          const noteLabel = note.referenced_timestamp_label || note.timestamp_label
           doc.text(
-            shots.length > 1 ? `Screenshot ${s + 1}/${shots.length}  —  ${note.timestamp_label}` : `Screenshot  —  ${note.timestamp_label}`,
+            shots.length > 1 ? `Screenshot ${s + 1}/${shots.length}  —  ${noteLabel}` : `Screenshot  —  ${noteLabel}`,
             mL, y
           ); y += 4
 
@@ -369,7 +413,7 @@ export default function RevisionPage() {
         doc.textWithLink(`▶ ${noteUrl}`, mL, y, { url: noteUrl }); y += 8
       }
 
-      drawFooter(`Revision ${i + 1} of ${revisionNotes.length}  •  ${note.timestamp_label}`, noteUrl)
+      drawFooter(`Revision ${i + 1} of ${revisionNotes.length}  •  ${note.referenced_timestamp_label || note.timestamp_label}`, noteUrl)
     }
 
     // ── FILL TOC ──────────────────────────────────────────────────────────
@@ -407,7 +451,7 @@ export default function RevisionPage() {
     doc.text('TIMESTAMPED REVISIONS', mL, y); y += 5
     for (let i = 0; i < revisionNotes.length; i++) {
       if (y > pageH - 15) break
-      tocRow(`${i + 1}.  [${revisionNotes[i].timestamp_label}]  ${revisionNotes[i].note}`, notePageNums[i], 2)
+      tocRow(`${i + 1}.  [${revisionNotes[i].referenced_timestamp_label || revisionNotes[i].timestamp_label}]  ${revisionNotes[i].note}`, notePageNums[i], 2)
     }
 
     // Build a meaningful filename from the AI-generated title
@@ -471,7 +515,7 @@ export default function RevisionPage() {
       children.push(new Paragraph({ text: 'Timestamped Revision Notes', heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 120 } }))
       for (const note of revisionNotes) {
         const tsChildren: any[] = [
-          new TextRun({ text: `[${note.timestamp_label}]  `, bold: true, color: note.completed ? '888888' : '2244AA', size: 20 }),
+          new TextRun({ text: `[${note.referenced_timestamp_label || note.timestamp_label}]  `, bold: true, color: note.completed ? '888888' : '2244AA', size: 20 }),
         ]
         if (note.loom_url) {
           tsChildren.push(new ExternalHyperlink({
@@ -598,6 +642,13 @@ export default function RevisionPage() {
               className="bg-amber-500 text-black px-5 py-2 font-semibold hover:bg-amber-600 transition-colors border-2 border-amber-600"
             >
               📝 Export .docx
+            </button>
+            <button
+              onClick={handleSaveAndShare}
+              disabled={savingSession}
+              className="bg-blue-600 text-white px-5 py-2 font-semibold hover:bg-blue-700 transition-colors border-2 border-blue-700 disabled:opacity-60 disabled:cursor-wait"
+            >
+              {savingSession ? '⏳ Saving…' : '🔗 Save & Share'}
             </button>
             <button
               onClick={() => router.push('/')}
@@ -959,6 +1010,55 @@ export default function RevisionPage() {
                   <span className="ml-2 text-gray-400">({lightboxIndex + 1}/{lightboxScreenshots.length})</span>
                 )}
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Share Modal ── */}
+      {showShareModal && shareUrl && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowShareModal(false)}
+        >
+          <div
+            className="bg-white max-w-lg w-full p-8 shadow-2xl border-2 border-blue-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-5">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">🔗 Review Saved!</h2>
+                <p className="text-gray-600 mt-1 text-sm">Anyone with this link can view and mark revisions complete.</p>
+              </div>
+              <button onClick={() => setShowShareModal(false)}
+                className="text-gray-400 hover:text-gray-700 text-2xl font-bold w-8 h-8 flex items-center justify-center">
+                ×
+              </button>
+            </div>
+
+            <div className="bg-gray-50 border-2 border-gray-200 p-3 mb-5 break-all text-sm text-gray-800 font-mono select-all">
+              {shareUrl}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleCopyShareUrl}
+                className={`flex-1 py-2.5 font-semibold border-2 transition-colors ${
+                  copySuccess
+                    ? 'bg-green-100 border-green-400 text-green-700'
+                    : 'bg-blue-600 border-blue-700 text-white hover:bg-blue-700'
+                }`}
+              >
+                {copySuccess ? '✓ Copied!' : '📋 Copy Link'}
+              </button>
+              <a
+                href={shareUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-2.5 font-semibold border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 transition-colors text-center"
+              >
+                ↗ Open Link
+              </a>
             </div>
           </div>
         </div>

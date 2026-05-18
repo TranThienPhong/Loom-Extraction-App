@@ -54,6 +54,16 @@ export default function Results() {
   const [lightboxTimestamp, setLightboxTimestamp] = useState<string>('')
   const [lightboxIndex, setLightboxIndex] = useState<number>(0)
   const [currentTaskScreenshots, setCurrentTaskScreenshots] = useState<Screenshot[]>([])
+
+  // Per-task completion (persisted to DB2 via Save & Share)
+  const [completedTaskIds, setCompletedTaskIds] = useState<Set<string>>(new Set())
+
+  // Save & Share
+  const [savingSession, setSavingSession] = useState(false)
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [copySuccess, setCopySuccess] = useState(false)
+
   const router = useRouter()
 
   useEffect(() => {
@@ -141,6 +151,53 @@ export default function Results() {
 
     loadResults()
   }, [router])
+
+  const toggleTaskComplete = (id: string) => {
+    setCompletedTaskIds(prev => {
+      const s = new Set(prev)
+      s.has(id) ? s.delete(id) : s.add(id)
+      return s
+    })
+  }
+
+  const handleSaveAndShare = async () => {
+    setSavingSession(true)
+    try {
+      const tasksWithCompletion = tasks.map(t => ({ ...t, completed: completedTaskIds.has(t._id) }))
+      const titleGuess = tasks.length > 0 ? tasks[0].task_name : 'Extracted Tasks'
+      const loomUrlGuess = tasks.length > 0 ? tasks[0].loom_url : ''
+
+      const res = await fetch('/api/task-sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: titleGuess,
+          summary,
+          loom_url: loomUrlGuess,
+          video_id: videoId,
+          tasks: tasksWithCompletion,
+          transcript,
+        }),
+      })
+      if (!res.ok) throw new Error('Failed to save session')
+      const { id } = await res.json()
+      const url = `${window.location.origin}/tasks/${id}`
+      setShareUrl(url)
+      setShowShareModal(true)
+    } catch (err: any) {
+      alert(`Failed to save task session: ${err.message}`)
+    } finally {
+      setSavingSession(false)
+    }
+  }
+
+  const handleCopyShareUrl = () => {
+    if (!shareUrl) return
+    navigator.clipboard?.writeText(shareUrl).then(() => {
+      setCopySuccess(true)
+      setTimeout(() => setCopySuccess(false), 2000)
+    }).catch(() => {})
+  }
 
   const startEdit = (task: Task) => {
     setEditingTaskId(task._id)
@@ -731,6 +788,13 @@ export default function Results() {
               📄 Export PDF
             </button>
             <button
+              onClick={handleSaveAndShare}
+              disabled={savingSession}
+              className="bg-blue-600 text-white px-5 py-2 font-semibold hover:bg-blue-700 transition-colors border-2 border-blue-700 disabled:opacity-60 disabled:cursor-wait"
+            >
+              {savingSession ? '⏳ Saving…' : '🔗 Save & Share'}
+            </button>
+            <button
               onClick={() => router.push('/')}
               className="bg-gray-200 text-gray-700 px-5 py-2 font-semibold hover:bg-gray-300 transition-colors border-2 border-gray-300"
             >
@@ -866,6 +930,17 @@ export default function Results() {
 
                   {editingTaskId !== task._id && (
                     <div className="flex gap-2 flex-shrink-0">
+                      <button
+                        onClick={() => toggleTaskComplete(task._id)}
+                        title={completedTaskIds.has(task._id) ? 'Mark pending' : 'Mark complete'}
+                        className={`w-8 h-8 flex items-center justify-center border transition-colors ${
+                          completedTaskIds.has(task._id)
+                            ? 'bg-green-500 border-green-500 text-white hover:bg-green-600'
+                            : 'border-gray-200 text-gray-400 hover:text-green-600 hover:bg-green-50 hover:border-green-400'
+                        }`}
+                      >
+                        <span className="text-xs font-bold">✓</span>
+                      </button>
                       <button
                         onClick={() => startEdit(task)}
                         title="Edit task"
@@ -1050,6 +1125,55 @@ export default function Results() {
                   <span className="ml-2 text-gray-400">({lightboxIndex + 1}/{currentTaskScreenshots.length})</span>
                 )}
               </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Share Modal ── */}
+      {showShareModal && shareUrl && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowShareModal(false)}
+        >
+          <div
+            className="bg-white max-w-lg w-full p-8 shadow-2xl border-2 border-blue-200"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between mb-5">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">🔗 Session Saved!</h2>
+                <p className="text-gray-600 mt-1 text-sm">Anyone with this link can view tasks and mark them complete.</p>
+              </div>
+              <button onClick={() => setShowShareModal(false)}
+                className="text-gray-400 hover:text-gray-700 text-2xl font-bold w-8 h-8 flex items-center justify-center">
+                ×
+              </button>
+            </div>
+
+            <div className="bg-gray-50 border-2 border-gray-200 p-3 mb-5 break-all text-sm text-gray-800 font-mono select-all">
+              {shareUrl}
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={handleCopyShareUrl}
+                className={`flex-1 py-2.5 font-semibold border-2 transition-colors ${
+                  copySuccess
+                    ? 'bg-green-100 border-green-400 text-green-700'
+                    : 'bg-blue-600 border-blue-700 text-white hover:bg-blue-700'
+                }`}
+              >
+                {copySuccess ? '✓ Copied!' : '📋 Copy Link'}
+              </button>
+              <a
+                href={shareUrl as string}
+                target="_blank"
+                rel="noreferrer"
+                className="flex-1 py-2.5 font-semibold border-2 border-indigo-600 text-indigo-600 hover:bg-indigo-50 transition-colors text-center"
+              >
+                ↗ Open Link
+              </a>
             </div>
           </div>
         </div>

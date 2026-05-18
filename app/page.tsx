@@ -60,6 +60,31 @@ export default function Home() {
               } catch {}
             }
           }
+
+          // Auto-save to DB2 and redirect to /review/[id]
+          try {
+            const saveRes = await fetch('/api/review-sessions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                title: data.title || '',
+                summary: data.summary || '',
+                loom_url: data.loomUrl || loomUrl,
+                video_id: data._originalVideoId || data.videoId || '',
+                global_notes: data.global_notes || [],
+                revision_notes: data.revision_notes || [],
+                transcript: data.transcript || [],
+              }),
+            })
+            if (saveRes.ok) {
+              const { id } = await saveRes.json()
+              router.push(`/review/${id}`)
+              return
+            }
+          } catch (dbErr) {
+            console.warn('[App] DB2 save failed, falling back to /revision:', dbErr)
+          }
+
           await new Promise(resolve => setTimeout(resolve, 100))
           router.push('/revision')
         } else {
@@ -146,6 +171,30 @@ export default function Home() {
           alert('Warning: Failed to store images. They may not display correctly.')
         }
         
+        // Auto-save to DB2 and redirect to /tasks/[id]
+        try {
+          const firstTask = data.tasks?.[0]
+          const saveRes = await fetch('/api/task-sessions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              title: firstTask?.task_name || 'Extracted Tasks',
+              summary: data.summary || '',
+              loom_url: firstTask?.loom_url || loomUrl,
+              video_id: data.videoId || '',
+              tasks: (data.tasks || []).map((t: any) => ({ ...t, completed: false })),
+              transcript: data.transcript || [],
+            }),
+          })
+          if (saveRes.ok) {
+            const { id } = await saveRes.json()
+            router.push(`/tasks/${id}`)
+            return
+          }
+        } catch (dbErr) {
+          console.warn('[App] DB2 save failed, falling back to /results:', dbErr)
+        }
+
         // Small delay to ensure storage completes
         await new Promise(resolve => setTimeout(resolve, 100))
         router.push('/results')
