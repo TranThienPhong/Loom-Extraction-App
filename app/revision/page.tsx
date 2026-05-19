@@ -51,6 +51,17 @@ export default function RevisionPage() {
   const [lightboxScreenshots, setLightboxScreenshots] = useState<RevisionScreenshot[]>([])
   const [lightboxIndex, setLightboxIndex] = useState(0)
 
+  // ── Share With Editors ─────────────────────────────────────────────────
+  const [sharing, setSharing] = useState(false)
+  const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [shareError, setShareError] = useState<string | null>(null)
+  const [copyOk, setCopyOk] = useState(false)
+  const [ownerName, setOwnerName] = useState('')
+  const [assignedTo, setAssignedTo] = useState('')
+  const [showShareModal, setShowShareModal] = useState(false)
+  const [userOptions, setUserOptions] = useState<string[]>([])
+  const [usersLoading, setUsersLoading] = useState(false)
+
   // Keyboard nav for lightbox
   useEffect(() => {
     const handle = (e: KeyboardEvent) => {
@@ -134,6 +145,75 @@ export default function RevisionPage() {
 
   const loomTimestampUrl = (ts: number) =>
     videoId ? `https://www.loom.com/share/${videoId}?t=${ts}` : (loomUrl || '')
+
+  // Fetch users for the dropdowns when the share modal opens
+  useEffect(() => {
+    if (!showShareModal || userOptions.length > 0 || usersLoading) return
+    setUsersLoading(true)
+    fetch('/api/users')
+      .then(r => r.json())
+      .then(j => setUserOptions(Array.isArray(j.users) ? j.users : []))
+      .catch(() => setUserOptions([]))
+      .finally(() => setUsersLoading(false))
+  }, [showShareModal, userOptions.length, usersLoading])
+
+  // ── Share With Editors action ─────────────────────────────────────────
+  const handleShareWithEditors = async () => {
+    setSharing(true)
+    setShareError(null)
+    setCopyOk(false)
+    try {
+      const payload = {
+        title,
+        summary,
+        videoId,
+        loomUrl,
+        ownerName: ownerName.trim() || undefined,
+        assignedTo: assignedTo.trim() || undefined,
+        globalNotes: globalNotes.map(g => ({ note: g.note })),
+        timedNotes: revisionNotes.map(n => ({
+          title: n.title,
+          note: n.note,
+          raw_speech: n.raw_speech,
+          timestamp_seconds: n.timestamp_seconds,
+          timestamp_label: n.timestamp_label,
+          referenced_timestamp_seconds: n.referenced_timestamp_seconds ?? null,
+          referenced_timestamp_label: n.referenced_timestamp_label ?? null,
+          loom_url: n.loom_url || loomTimestampUrl(n.timestamp_seconds),
+          screenshots: (n.screenshots || []).map(s => ({
+            timestamp_seconds: s.timestamp_seconds,
+            timestamp_label: s.timestamp_label,
+            image_base64: s.image_base64,
+            image_url: s.image_url,
+          })),
+        })),
+      }
+      const res = await fetch('/api/revision-review/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+      const url = `${window.location.origin}/revision-review/${data.shareId}`
+      setShareUrl(url)
+    } catch (e: any) {
+      setShareError(e.message || 'Failed to create share link')
+    } finally {
+      setSharing(false)
+    }
+  }
+
+  const copyShareUrl = async () => {
+    if (!shareUrl) return
+    try {
+      await navigator.clipboard.writeText(shareUrl)
+      setCopyOk(true)
+      setTimeout(() => setCopyOk(false), 2000)
+    } catch {
+      // Fallback: select-friendly state already shown
+    }
+  }
 
   const pendingCount = revisionNotes.filter(n => !n.completed).length + globalNotes.filter(n => !n.completed).length
   const completedCount = revisionNotes.filter(n => n.completed).length + globalNotes.filter(n => n.completed).length
@@ -598,6 +678,12 @@ export default function RevisionPage() {
           </div>
           <div className="flex flex-wrap gap-3">
             <button
+              onClick={() => { setShowShareModal(true); setShareUrl(null); setShareError(null) }}
+              className="bg-indigo-600 text-white px-5 py-2 font-semibold hover:bg-indigo-700 transition-colors border-2 border-indigo-700"
+            >
+              🔗 Share With Editors
+            </button>
+            <button
               onClick={handleExportPDF}
               className="bg-green-600 text-white px-5 py-2 font-semibold hover:bg-green-700 transition-colors border-2 border-green-700"
             >
@@ -673,7 +759,7 @@ export default function RevisionPage() {
             >
               {f === 'all' ? `All (${totalCount})` :
                f === 'global' ? `Global Notes (${globalNotes.length})` :
-               f === 'pending' ? `Timestamps Notes (${revisionPendingCount})` :
+               f === 'pending' ? `Timestamps Revision Notes (${revisionPendingCount})` :
                `Completed (${revisionCompletedCount})`}
             </button>
           ))}
@@ -916,6 +1002,105 @@ export default function RevisionPage() {
         )}
 
       </div>{/* max-w-5xl */}
+
+      {/* ── Share With Editors modal ── */}
+      {showShareModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex items-center justify-center p-4"
+             onClick={() => !sharing && setShowShareModal(false)}>
+          <div className="bg-white border-2 border-indigo-300 max-w-lg w-full" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b-2 border-gray-200 px-5 py-3">
+              <h3 className="text-lg font-bold text-gray-900">🔗 Share With Editors</h3>
+              <button onClick={() => setShowShareModal(false)} disabled={sharing}
+                className="text-gray-500 hover:text-gray-800 text-2xl leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-4">
+              {!shareUrl && (
+                <>
+                  <p className="text-sm text-gray-600">
+                    Create a tracking page editors can open to mark items complete and leave comments.
+                    Your edits to titles, descriptions and screenshots above will be captured into the shared version.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Owner / Project manager <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <select
+                        value={ownerName}
+                        onChange={e => setOwnerName(e.target.value)}
+                        disabled={usersLoading}
+                        className="w-full border-2 border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:border-indigo-500 disabled:bg-gray-50"
+                      >
+                        <option value="">{usersLoading ? 'Loading…' : '— select owner —'}</option>
+                        {userOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-700 mb-1">
+                        Assigned editor <span className="text-gray-400 font-normal">(optional)</span>
+                      </label>
+                      <select
+                        value={assignedTo}
+                        onChange={e => setAssignedTo(e.target.value)}
+                        disabled={usersLoading}
+                        className="w-full border-2 border-gray-300 px-3 py-2 text-sm text-gray-900 bg-white focus:outline-none focus:border-indigo-500 disabled:bg-gray-50"
+                      >
+                        <option value="">{usersLoading ? 'Loading…' : '— select editor —'}</option>
+                        {userOptions.map(u => <option key={u} value={u}>{u}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  {shareError && (
+                    <div className="bg-red-50 border-2 border-red-300 text-red-800 text-sm px-3 py-2">
+                      {shareError}
+                    </div>
+                  )}
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => setShowShareModal(false)} disabled={sharing}
+                      className="px-4 py-2 text-sm font-semibold border-2 border-gray-300 text-gray-700 bg-white hover:bg-gray-50">
+                      Cancel
+                    </button>
+                    <button onClick={handleShareWithEditors} disabled={sharing}
+                      className="px-4 py-2 text-sm font-semibold bg-indigo-600 text-white border-2 border-indigo-700 hover:bg-indigo-700 disabled:bg-gray-300 disabled:border-gray-300 disabled:cursor-not-allowed">
+                      {sharing ? 'Creating link…' : 'Create share link'}
+                    </button>
+                  </div>
+                </>
+              )}
+              {shareUrl && (
+                <>
+                  <div className="bg-green-50 border-2 border-green-300 text-green-800 text-sm px-3 py-2">
+                    ✓ Share link created. Send this to your editors — they&apos;ll track completion live.
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={shareUrl}
+                      onFocus={e => e.currentTarget.select()}
+                      className="flex-1 border-2 border-gray-300 px-3 py-2 text-sm font-mono text-gray-900 bg-gray-50"
+                    />
+                    <button onClick={copyShareUrl}
+                      className="px-4 py-2 text-sm font-semibold bg-indigo-600 text-white border-2 border-indigo-700 hover:bg-indigo-700">
+                      {copyOk ? '✓ Copied' : 'Copy'}
+                    </button>
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <a href={shareUrl} target="_blank" rel="noreferrer"
+                      className="px-4 py-2 text-sm font-semibold border-2 border-indigo-700 text-indigo-700 bg-white hover:bg-indigo-50">
+                      ↗ Open editor view
+                    </a>
+                    <button onClick={() => setShowShareModal(false)}
+                      className="px-4 py-2 text-sm font-semibold bg-gray-200 text-gray-700 border-2 border-gray-300 hover:bg-gray-300">
+                      Done
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Lightbox — same style as task list ── */}
       {lightboxImage && (

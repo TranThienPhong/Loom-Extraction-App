@@ -101,11 +101,14 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
-      // Extract frame using ffmpeg
-      // -y: overwrite output without prompting (prevents hang)
-      // -ss BEFORE -i: fast input seek (keyframe-accurate, no full decode needed)
-      // -loglevel error: suppress info/warnings so stderr doesn't flood buffer
-      const command = `ffmpeg -y -ss ${timestampSeconds} -i "${videoPath}" -vframes 1 -q:v 2 -loglevel error "${framePath}"`
+      // Accurate seek: pre-seek with -ss BEFORE -i to a nearby keyframe (fast),
+      // then -ss AFTER -i to step forward to the exact frame. This avoids the
+      // off-by-keyframe error where the screenshot showed the next/previous shot.
+      const preSeek = Math.max(0, timestampSeconds - 2)
+      const postSeek = timestampSeconds - preSeek
+      const command = preSeek > 0
+        ? `ffmpeg -y -ss ${preSeek} -i "${videoPath}" -ss ${postSeek} -frames:v 1 -q:v 2 -loglevel error "${framePath}"`
+        : `ffmpeg -y -i "${videoPath}" -ss ${timestampSeconds} -frames:v 1 -q:v 2 -loglevel error "${framePath}"`
       
       const { stderr } = await execAsync(command, {
         maxBuffer: 1024 * 1024 * 10, // 10MB buffer
