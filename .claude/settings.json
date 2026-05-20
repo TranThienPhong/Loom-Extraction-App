@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /home/kaitran/Loom-Extraction-App/migrations /home/kaitran/Loom-Extraction-App/scripts /home/kaitran/Loom-Extraction-App/app/api/revision-review /home/kaitran/Loom-Extraction-App/app/revision-review)",
+      "Bash(npx --yes tsx scripts/migrate-review-db.ts)",
+      "Bash(npx tsc *)",
+      "Bash(PORT=3777 npx next dev)",
+      "Bash(curl -sS http://localhost:3000/api/revision-review/create)",
+      "Bash(cat)",
+      "Bash(bash /tmp/test-review-flow.sh)",
+      "Bash(curl -sS http://localhost:3000/revision-review/vr8o896amc)",
+      "Bash(cp /tmp/cleanup-test.ts /home/kaitran/Loom-Extraction-App/scripts/cleanup-test.ts)",
+      "Bash(npx --yes tsx scripts/cleanup-test.ts)",
+      "Bash(curl -sS http://localhost:3000/api/users)"
+    ],
+    "additionalDirectories": [
+      "/home/kaitran/Loom-Extraction-App"
+    ]
+  }
+}
