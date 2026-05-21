@@ -4,6 +4,7 @@ import { extractFrame, secondsToTimestamp, getVideoDuration } from '@/lib/frameE
 import { parseManualTranscript, parseSubtitleFile, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptForRevision } from '@/lib/revisionProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
+import { saveExtractionResult } from '@/lib/resultsDb'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -185,7 +186,7 @@ export async function POST(request: NextRequest) {
     // Format transcript for storage
     const transcriptForStorage = transcript.map(e => ({ t: e.timestamp_label, s: e.text }))
 
-    return NextResponse.json({
+    const responseData = {
       videoId,
       loomUrl,
       title: revisionResult.title,
@@ -193,7 +194,27 @@ export async function POST(request: NextRequest) {
       global_notes: revisionResult.global_notes,
       revision_notes: notesWithScreenshots,
       transcript: transcriptForStorage,
-    })
+    }
+
+    let resultId: string | null = null
+    try {
+      const r = await saveExtractionResult({
+        mode: 'revision',
+        title: revisionResult.title || null,
+        summary: revisionResult.summary || null,
+        videoId,
+        loomUrl,
+        itemCount:
+          (revisionResult.global_notes?.length || 0) +
+          (notesWithScreenshots?.length || 0),
+        payload: responseData,
+      })
+      resultId = r.id
+    } catch (saveErr: any) {
+      console.warn('[process-revision] history save failed:', saveErr?.message || saveErr)
+    }
+
+    return NextResponse.json({ ...responseData, id: resultId })
   } catch (error: any) {
     console.error('[Revision] Error:', error.message)
     return NextResponse.json(

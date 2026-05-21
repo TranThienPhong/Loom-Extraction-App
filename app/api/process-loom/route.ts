@@ -4,6 +4,7 @@ import { extractFrame, secondsToTimestamp } from '@/lib/frameExtractor'
 import { parseManualTranscript, parseSubtitleFile, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
 import { analyzeTranscriptWithAI, generateVideoSummary } from '@/lib/aiProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
+import { saveExtractionResult } from '@/lib/resultsDb'
 import * as path from 'path'
 import * as fs from 'fs'
 
@@ -240,14 +241,34 @@ export async function POST(request: NextRequest) {
       cleanupVideo(videoPath)
     }
 
-    return NextResponse.json({
+    const responseData = {
       success: true,
       videoId,
+      loomUrl,
       summary: summary || '',
       tasks: tasksWithImages,
       totalTasks: tasksWithImages.length,
       transcript: transcript.map((e: any) => ({ t: e.timestamp_label, s: e.text })),
-    })
+    }
+
+    // Persist to history (failure here must not break the user-facing flow).
+    let resultId: string | null = null
+    try {
+      const r = await saveExtractionResult({
+        mode: 'task',
+        title: (summary || '').slice(0, 120) || null,
+        summary: summary || null,
+        videoId,
+        loomUrl,
+        itemCount: tasksWithImages.length,
+        payload: responseData,
+      })
+      resultId = r.id
+    } catch (saveErr: any) {
+      console.warn('[process-loom] history save failed:', saveErr?.message || saveErr)
+    }
+
+    return NextResponse.json({ ...responseData, id: resultId })
   } catch (error: any) {
     console.error('Error processing Loom video:', error)
     
