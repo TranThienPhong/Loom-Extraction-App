@@ -1,8 +1,25 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { storeProcessingResults, storeRevisionResults } from '@/lib/imageStorage'
+
+interface HistoryItem {
+  id: string
+  mode: 'task' | 'revision'
+  title: string | null
+  summary: string | null
+  video_id: string | null
+  loom_url: string | null
+  item_count: number
+  created_at: string
+}
+
+function historyDisplayName(createdAt: string): string {
+  const d = new Date(createdAt)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_results_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+}
 
 export default function Home() {
   const [loomUrl, setLoomUrl] = useState('')
@@ -11,7 +28,42 @@ export default function Home() {
   const [error, setError] = useState<{message: string, needsManualTranscript?: boolean} | null>(null)
   const [useManualTranscript, setUseManualTranscript] = useState(false)
   const [mode, setMode] = useState<'task' | 'revision'>('task')
+  const [history, setHistory] = useState<HistoryItem[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+  const [historyFilter, setHistoryFilter] = useState<'all' | 'task' | 'revision'>('all')
   const router = useRouter()
+
+  const loadHistory = useCallback(async () => {
+    setHistoryLoading(true)
+    setHistoryError(null)
+    try {
+      const res = await fetch('/api/results', { cache: 'no-store' })
+      const j = await res.json()
+      if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`)
+      setHistory(Array.isArray(j.results) ? j.results : [])
+    } catch (e: any) {
+      setHistoryError(e.message || 'Failed to load history')
+    } finally {
+      setHistoryLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadHistory() }, [loadHistory])
+
+  const deleteHistoryItem = async (id: string) => {
+    if (!confirm('Delete this extraction from history?\nThis cannot be undone.')) return
+    try {
+      const res = await fetch(`/api/results/${id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}))
+        throw new Error(j.error || `HTTP ${res.status}`)
+      }
+      setHistory(prev => prev.filter(h => h.id !== id))
+    } catch (e: any) {
+      alert('Failed to delete: ' + e.message)
+    }
+  }
 
   // Auto-show manual transcript option when API fails
   useEffect(() => {
@@ -400,6 +452,94 @@ You can also paste plain text without timestamps - we'll assign them automatical
               </>
             )}
           </div>
+        </div>
+
+        {/* ── Loomster History ── */}
+        <div className="mt-8 bg-white shadow-xl p-8 border border-gray-200">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div>
+              <h2 className="text-2xl font-bold text-gray-900">📚 Loomster History</h2>
+              <p className="text-sm text-gray-500 mt-0.5">
+                Past extractions. Click an entry to reopen.
+              </p>
+            </div>
+            <div className="flex gap-2 items-center">
+              {(['all', 'task', 'revision'] as const).map(f => (
+                <button
+                  key={f}
+                  onClick={() => setHistoryFilter(f)}
+                  className={`px-3 py-1.5 text-xs font-semibold border-2 transition-colors ${
+                    historyFilter === f
+                      ? f === 'task'
+                        ? 'border-indigo-600 bg-indigo-50 text-indigo-700'
+                        : f === 'revision'
+                          ? 'border-amber-500 bg-amber-50 text-amber-700'
+                          : 'border-gray-600 bg-gray-100 text-gray-800'
+                      : 'border-gray-200 bg-white text-gray-600 hover:border-gray-400'
+                  }`}
+                >
+                  {f === 'all' ? `All (${history.length})`
+                    : f === 'task' ? `📋 Task (${history.filter(h => h.mode === 'task').length})`
+                    : `✏️ Revision (${history.filter(h => h.mode === 'revision').length})`}
+                </button>
+              ))}
+              <button
+                onClick={loadHistory}
+                title="Refresh"
+                className="px-3 py-1.5 text-xs font-semibold border-2 border-gray-200 bg-white text-gray-600 hover:border-gray-400">
+                ↻
+              </button>
+            </div>
+          </div>
+
+          {historyError && (
+            <div className="bg-red-50 border-2 border-red-300 text-red-800 text-sm px-3 py-2 mb-3">
+              {historyError}
+            </div>
+          )}
+
+          {historyLoading && history.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 text-sm">Loading history…</div>
+          ) : history.length === 0 ? (
+            <div className="text-center py-10 text-gray-400 text-sm">
+              No extractions yet. Process a Loom video above to get started.
+            </div>
+          ) : (
+            <ul className="divide-y divide-gray-100 border-2 border-gray-200">
+              {history
+                .filter(h => historyFilter === 'all' ? true : h.mode === historyFilter)
+                .map(h => (
+                  <li
+                    key={h.id}
+                    onClick={() => router.push(`/result/${h.id}`)}
+                    className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <span className={`text-xs font-bold px-2 py-1 border whitespace-nowrap flex-shrink-0 mt-0.5 ${
+                      h.mode === 'task'
+                        ? 'bg-indigo-100 text-indigo-800 border-indigo-300'
+                        : 'bg-amber-100 text-amber-800 border-amber-300'
+                    }`}>
+                      {h.mode === 'task' ? '📋 TASK' : '✏️ REVISION'}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="font-mono text-sm text-gray-800 truncate">{historyDisplayName(h.created_at)}</p>
+                      <p className="text-sm text-gray-600 truncate">
+                        {h.title || <span className="text-gray-400 italic">(untitled)</span>}
+                        <span className="text-gray-400"> · {h.item_count} {h.mode === 'task' ? `task${h.item_count === 1 ? '' : 's'}` : `note${h.item_count === 1 ? '' : 's'}`}</span>
+                      </p>
+                      <p className="text-xs text-gray-400 mt-0.5">{new Date(h.created_at).toLocaleString()}</p>
+                    </div>
+                    <button
+                      onClick={e => { e.stopPropagation(); deleteHistoryItem(h.id) }}
+                      title="Delete from history"
+                      className="text-gray-300 hover:text-red-600 text-xl leading-none px-2 py-1 flex-shrink-0"
+                    >
+                      ×
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          )}
         </div>
       </div>
     </div>

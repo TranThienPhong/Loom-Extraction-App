@@ -11,7 +11,8 @@
       "Bash(curl -sS http://localhost:3000/revision-review/vr8o896amc)",
       "Bash(cp /tmp/cleanup-test.ts /home/kaitran/Loom-Extraction-App/scripts/cleanup-test.ts)",
       "Bash(npx --yes tsx scripts/cleanup-test.ts)",
-      "Bash(curl -sS http://localhost:3000/api/users)"
+      "Bash(curl -sS http://localhost:3000/api/users)",
+      "Bash(curl -sS http://localhost:3000/)"
     ],
     "additionalDirectories": [
       "/home/kaitran/Loom-Extraction-App"
