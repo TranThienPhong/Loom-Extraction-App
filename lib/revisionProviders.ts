@@ -23,6 +23,7 @@ export interface RevisionNote {
   referenced_timestamp_label?: string | null
   title: string
   note: string
+  priority: number
   raw_speech?: string
   completed: boolean
   loom_url?: string
@@ -96,7 +97,10 @@ Instructions:
 
 1. **Title**: Generate a concise revision session title, e.g. "Revision Notes for Section 1 of Financial Reckoning Day"
 
-2. **Summary**: Write 2-3 sentences describing what the video is about and the nature of the revisions needed.
+2. **Summary**: Write a structured summary with exactly 3 paragraphs separated by a blank line between each:
+   - Paragraph 1 (2-3 sentences): What the video being reviewed is about — who is reviewing, what product/feature/area they are critiquing, and the overall nature of the revisions.
+   - Paragraph 2 (1-2 sentences): Task urgency — which revisions are need-to-have (critical, blocking, must-fix) versus nice-to-have (improvements, polish, optional).
+   - Paragraph 3 (1-2 sentences): Team assignment — based on the areas or sections discussed, describe who the revisions appear to be assigned to (use names or roles from the transcript).
 
 3. **Global Notes**: Recurring rules or patterns that apply to the entire video.
    Examples:
@@ -118,7 +122,9 @@ Instructions:
    - "too fast" → "Slow down the transition between the chart slides for better readability"
    - "this doesn't match" → "The background color does not match the brand palette — align with the reference"
 
-6. **Screenshot Timestamps**: For each timestamped note, include 1-3 nearby timestamps for frame capture. Pick the best moments to visually capture the issue.
+7. **Priority**: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Always use 3.0 — do not leave blank or omit, even if priority is never mentioned in the transcript.
+
+8. **Screenshot Timestamps**: For each timestamped note, include 1-3 nearby timestamps for frame capture. Pick the best moments to visually capture the issue.
 
 Return ONLY a valid JSON object with this exact structure (no markdown, no extra text):
 {
@@ -137,6 +143,7 @@ Return ONLY a valid JSON object with this exact structure (no markdown, no extra
       "referenced_timestamp_label": "<M:SS of the fix location in the reviewed video, or null>",
       "title": "<3-6 word bold title for this revision, e.g. 'ReRender AI Video Avatar'>",
       "note": "<clean, professional editor instruction — detailed description>",
+      "priority": <1.1-4.9 float — always 3.0 if not explicitly stated>,
       "raw_speech": "<verbatim original speech from transcript>",
       "screenshot_timestamps": [<1-3 timestamp numbers as integers>]
     }
@@ -187,6 +194,7 @@ function parseRevisionResponse(text: string): RevisionAnalysisResult {
         referenced_timestamp_label: n.referenced_timestamp_label || null,
         title: n.title || '',
         note: n.note || '',
+        priority: typeof n.priority === 'number' ? n.priority : 3.0,
         raw_speech: n.raw_speech || '',
         completed: false,
         screenshot_timestamps: Array.isArray(n.screenshot_timestamps)

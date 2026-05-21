@@ -778,7 +778,11 @@ export default function Results() {
                 </div>
               </div>
             ) : (
-              <p className="text-gray-700 leading-relaxed">{summary}</p>
+              <div className="space-y-3 mt-1">
+                {summary.split('\n\n').filter(p => p.trim()).map((para, i) => (
+                  <p key={i} className="text-gray-700 leading-relaxed">{para.trim()}</p>
+                ))}
+              </div>
             )}
           </div>
         )}
