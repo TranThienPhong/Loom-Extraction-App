@@ -25,6 +25,7 @@ interface RevisionNote {
   referenced_timestamp_label?: string | null
   title?: string
   note: string
+  priority?: number
   raw_speech?: string
   completed: boolean
   loom_url?: string
@@ -741,7 +742,11 @@ export default function RevisionPage() {
         {summary && (
           <div className="bg-indigo-50 border-2 border-indigo-200 p-5 mb-6">
             <h2 className="text-lg font-bold text-indigo-800">📋 Video Summary</h2>
-            <p className="text-gray-700 leading-relaxed mt-2">{summary}</p>
+            <div className="space-y-3 mt-2">
+              {summary.split('\n\n').filter(p => p.trim()).map((para, i) => (
+                <p key={i} className="text-gray-700 leading-relaxed">{para.trim()}</p>
+              ))}
+            </div>
           </div>
         )}
 

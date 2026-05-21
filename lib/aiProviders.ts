@@ -235,7 +235,7 @@ Instructions:
    - If the transcript does NOT mention a value, pick the BEST matching option from the Reference Database above (if provided)
    - Leave empty ONLY if there is truly no reasonable match in either the transcript or the database
    - **ASSIGNEE — CRITICAL**: The transcript is auto-transcribed so names are frequently garbled. Always fuzzy-match spoken names to the closest entry in USERS by phonetic similarity or spelling. Examples: "Jonas" / "Jaunas" / "Yaunius" → Jaunius | "Foam" / "Phone" / "Fong" / "Pong" → Phong. Never leave the raw mispelled transcript name — always resolve to a real USERS entry if one is a plausible match.
-7. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default 3.0 if not stated.
+7. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Always use 3.0 — do not leave blank or omit, even if priority is never mentioned.
 8. Complexity: one of "SupC" (Super Complex), "COMP" (Complex), "MOD" (Moderate), "SIMP" (Simple)
 9. Task Type: "Need-to-have" if the speaker explicitly marks it as urgent, must-do today, blocking, or critical. "Nice-to-have" for everything else — including tasks that are not mentioned as urgent, low-priority suggestions, or improvements with no stated deadline.
 
@@ -346,12 +346,18 @@ export async function generateVideoSummary(transcript: TranscriptEntry[]): Promi
       max_tokens: 256,
       messages: [{
         role: 'user',
-        content: `Based on this video transcript excerpt, write a concise 2-3 sentence summary of what the video is about. Focus on the main purpose, who is speaking, and what they are reviewing or providing feedback on. Be specific about the product or feature being discussed.
+        content: `Based on this video transcript, write a structured summary with exactly 3 paragraphs separated by a blank line between each:
+
+Paragraph 1 (2-3 sentences): Describe what the video is about — who is speaking, what product/feature/area they are reviewing, and the overall nature of the feedback.
+
+Paragraph 2 (1-2 sentences): Identify task urgency — summarize which tasks or areas appear to be need-to-have (urgent, blocking, critical) versus nice-to-have (improvements, suggestions, low priority).
+
+Paragraph 3 (1-2 sentences): Identify team assignment — based on the pages, features, or modules discussed, describe who the tasks appear to be assigned to. Use names or roles mentioned in the transcript.
 
 Transcript:
 ${transcriptText}
 
-Write only the summary, no preamble.`
+Write only the 3 paragraphs with a blank line between each. No headings, no labels, no preamble.`
       }]
     })
     return message.content[0].type === 'text' ? message.content[0].text.trim() : ''
