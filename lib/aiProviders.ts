@@ -13,12 +13,53 @@ export interface AIAnalysisResult {
   area?: string
   assignee?: string
   task_type?: string
+  // 1-based index identifying which submitted Loom video this task came from.
+  // Only meaningful when the extraction spans multiple videos; defaults to 1.
+  video_index?: number
 }
 
 export interface TranscriptEntry {
   timestamp_seconds: number
   timestamp_label: string
   text: string
+  // 1-based: which Loom video this transcript line came from. Absent/1 for
+  // single-video runs, so the existing code path stays unchanged.
+  video_index?: number
+}
+
+/**
+ * Highest 1-based video index referenced by the transcript. 1 for single-video runs.
+ */
+function videoCountOf(entries: TranscriptEntry[]): number {
+  let max = 1
+  for (const e of entries) {
+    const vi = e.video_index || 1
+    if (vi > max) max = vi
+  }
+  return max
+}
+
+/**
+ * Render the transcript as the AI sees it. For multi-video runs, emit a
+ * `=== VIDEO N ===` header each time the video_index changes so the AI can
+ * attribute tasks to the right source video.
+ */
+function renderTranscriptForAI(entries: TranscriptEntry[]): string {
+  const videoCount = videoCountOf(entries)
+  if (videoCount <= 1) {
+    return entries.map(e => `[${e.timestamp_label}] ${e.text}`).join('\n')
+  }
+  const lines: string[] = []
+  let lastVideo = -1
+  for (const e of entries) {
+    const vi = e.video_index || 1
+    if (vi !== lastVideo) {
+      lines.push(`\n=== VIDEO ${vi} ===`)
+      lastVideo = vi
+    }
+    lines.push(`[${e.timestamp_label}] ${e.text}`)
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -26,7 +67,9 @@ export interface TranscriptEntry {
  * Supports: Anthropic Claude, OpenAI GPT-4, OpenRouter (free), and Ollama (local)
  */
 
-// Anthropic Claude provider
+// Anthropic Claude provider — tries Sonnet first, falls back to Haiku on overload.
+// Haiku is far less likely to be overloaded, so it's a much better fallback than
+// running 4 long retries against a Sonnet model that's currently saturated.
 export async function analyzeWithClaude(transcript: TranscriptEntry[], dbContext = ''): Promise<AIAnalysisResult[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY
 
@@ -36,45 +79,59 @@ export async function analyzeWithClaude(transcript: TranscriptEntry[], dbContext
 
   const anthropic = new Anthropic({ apiKey })
 
-  const transcriptText = transcript
-    .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
-    .join('\n')
+  const transcriptText = renderTranscriptForAI(transcript)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext, videoCountOf(transcript))
 
-  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
+  // Models to try, in order. After Sonnet's short retry budget is exhausted on
+  // an overload, fall through to Haiku rather than burning more time on Sonnet.
+  const MODELS = ['claude-sonnet-4-6', 'claude-haiku-4-5']
+  // Base delays + jitter prevents thundering-herd when user resubmits during a wait.
+  const RETRIES_PER_MODEL = 2
+  const BASE_DELAY_MS = [4000, 8000]
 
-  const MAX_RETRIES = 4
-  const RETRY_DELAY_MS = [5000, 10000, 20000, 30000]
+  let lastError: any = null
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      console.log(`Using Anthropic Claude for AI analysis... (attempt ${attempt}/${MAX_RETRIES})`)
+  for (const model of MODELS) {
+    for (let attempt = 1; attempt <= RETRIES_PER_MODEL; attempt++) {
+      try {
+        console.log(`Using Anthropic Claude (${model}) for AI analysis... (attempt ${attempt}/${RETRIES_PER_MODEL})`)
 
-      const message = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 16384,
-        messages: [{ role: 'user', content: prompt }],
-      })
+        const message = await anthropic.messages.create({
+          model,
+          max_tokens: 16384,
+          messages: [{ role: 'user', content: prompt }],
+        })
 
-      const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
-      return parseAIResponse(responseText)
-    } catch (error: any) {
-      const isOverloaded = error.status === 529 || (typeof error.message === 'string' && error.message.includes('overloaded'))
-      const isRateLimit = error.status === 429 || (typeof error.message === 'string' && error.message.includes('rate_limit'))
-      const shouldRetry = (isOverloaded || isRateLimit) && attempt < MAX_RETRIES
+        const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
+        return parseAIResponse(responseText)
+      } catch (error: any) {
+        lastError = error
+        const isOverloaded = error.status === 529 || (typeof error.message === 'string' && error.message.includes('overloaded'))
+        const isRateLimit = error.status === 429 || (typeof error.message === 'string' && error.message.includes('rate_limit'))
+        const retriable = isOverloaded || isRateLimit
 
-      if (shouldRetry) {
-        const delay = RETRY_DELAY_MS[attempt - 1]
-        console.warn(`Claude overloaded/rate-limited (attempt ${attempt}/${MAX_RETRIES}), retrying in ${delay / 1000}s...`)
-        await new Promise(resolve => setTimeout(resolve, delay))
-        continue
+        if (!retriable) {
+          console.error('Claude API error (non-retriable):', error.message)
+          throw new Error(`Claude API failed: ${error.message}`)
+        }
+
+        if (attempt < RETRIES_PER_MODEL) {
+          const jitter = Math.floor(Math.random() * 1500)
+          const delay = BASE_DELAY_MS[attempt - 1] + jitter
+          console.warn(`Claude ${model} overloaded/rate-limited (attempt ${attempt}/${RETRIES_PER_MODEL}), retrying in ${Math.round(delay / 1000)}s...`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+
+        // Exhausted retries on this model — break to fall over to next model.
+        console.warn(`Claude ${model} exhausted after ${RETRIES_PER_MODEL} attempts, falling over to next model...`)
+        break
       }
-
-      console.error('Claude API error:', error.message)
-      throw new Error(`Claude API failed: ${error.message}`)
     }
   }
 
-  throw new Error('Claude API failed after all retries')
+  console.error('Claude API error after all models:', lastError?.message)
+  throw new Error(`Claude API failed (all models overloaded): ${lastError?.message || 'unknown'}`)
 }
 
 // OpenAI GPT-4 provider
@@ -85,11 +142,8 @@ export async function analyzeWithOpenAI(transcript: TranscriptEntry[], dbContext
     throw new Error('OPENAI_API_KEY environment variable is not set')
   }
 
-  const transcriptText = transcript
-    .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
-    .join('\n')
-
-  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
+  const transcriptText = renderTranscriptForAI(transcript)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext, videoCountOf(transcript))
 
   try {
     console.log('Using OpenAI GPT-4 for AI analysis...')
@@ -101,7 +155,7 @@ export async function analyzeWithOpenAI(transcript: TranscriptEntry[], dbContext
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: 'gpt-4o',
+        model: 'gpt-5.4-mini',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
         max_tokens: 4096,
@@ -130,11 +184,8 @@ export async function analyzeWithOpenRouter(transcript: TranscriptEntry[], dbCon
     throw new Error('OPENROUTER_API_KEY environment variable is not set. Get free key at: https://openrouter.ai/keys')
   }
 
-  const transcriptText = transcript
-    .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
-    .join('\n')
-
-  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
+  const transcriptText = renderTranscriptForAI(transcript)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext, videoCountOf(transcript))
 
   try {
     console.log('Using OpenRouter for AI analysis...')
@@ -174,11 +225,8 @@ export async function analyzeWithOllama(transcript: TranscriptEntry[], dbContext
   const model = process.env.OLLAMA_MODEL || 'llama3.1'
   const baseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
 
-  const transcriptText = transcript
-    .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
-    .join('\n')
-
-  const prompt = buildAnalysisPrompt(transcriptText, dbContext)
+  const transcriptText = renderTranscriptForAI(transcript)
+  const prompt = buildAnalysisPrompt(transcriptText, dbContext, videoCountOf(transcript))
 
   try {
     console.log(`Using Ollama (${model}) for AI analysis...`)
@@ -210,11 +258,17 @@ export async function analyzeWithOllama(transcript: TranscriptEntry[], dbContext
 }
 
 // Build the analysis prompt
-function buildAnalysisPrompt(transcriptText: string, dbContext = ''): string {
+function buildAnalysisPrompt(transcriptText: string, dbContext = '', videoCount = 1): string {
+  const multi = videoCount > 1
+  const multiVideoNote = multi
+    ? `\n**MULTIPLE VIDEOS**: The transcript below combines ${videoCount} separate Loom videos. Each video's section starts with a "=== VIDEO N ===" header. Each task you return MUST include a "video_index" field (a number from 1 to ${videoCount}) identifying which source video the task came from. Timestamps reset to 0:00 at the start of each video — never combine timestamps across videos.\n`
+    : ''
+  const videoIndexField = multi ? `\n  "video_index": <integer 1-${videoCount} indicating source video>,` : ''
+  const videoIndexExample = multi ? `\n    "video_index": 1,` : ''
   return `You are analyzing a video transcript where someone is providing feedback, requesting changes, or identifying issues that need to be fixed.
 
 Your task: Extract EVERY moment where a task, fix, change, or improvement is mentioned or requested.
-${dbContext ? '\n' + dbContext + '\n' : ''}
+${dbContext ? '\n' + dbContext + '\n' : ''}${multiVideoNote}
 Here is the transcript with timestamps:
 
 ${transcriptText}
@@ -254,7 +308,7 @@ Return ONLY a JSON array with no additional text, explanation, or markdown forma
   "client": "<client name from transcript or database>",
   "area": "<area/job role from transcript or database>",
   "assignee": "<assignee name from transcript or database>",
-  "task_type": "<Need-to-have|Nice-to-have>"
+  "task_type": "<Need-to-have|Nice-to-have>"${videoIndexField}
 }
 
 Example:
@@ -271,7 +325,7 @@ Example:
     "client": "LaunchMen",
     "area": "Graphic Design",
     "assignee": "Phong Tran",
-    "task_type": "Nice-to-have"
+    "task_type": "Nice-to-have"${videoIndexExample}
   }
 ]
 
@@ -336,14 +390,16 @@ export async function generateVideoSummary(transcript: TranscriptEntry[]): Promi
 
   // Use first 80 entries max (faster, cheaper for summary)
   const sampleEntries = transcript.slice(0, 80)
-  const transcriptText = sampleEntries
-    .map(entry => `[${entry.timestamp_label}] ${entry.text}`)
-    .join('\n')
+  const transcriptText = renderTranscriptForAI(sampleEntries)
+  const videoCount = videoCountOf(transcript)
+  const multiVideoNote = videoCount > 1
+    ? `\n\nNote: This transcript combines ${videoCount} separate Loom videos, marked with "=== VIDEO N ===" headers. Treat them as one combined feedback session.`
+    : ''
 
   try {
     const message = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
-      max_tokens: 256,
+      max_tokens: 512,
       messages: [{
         role: 'user',
         content: `Based on this video transcript, write a structured summary with exactly 3 paragraphs separated by a blank line between each:
@@ -352,7 +408,7 @@ Paragraph 1 (2-3 sentences): Describe what the video is about — who is speakin
 
 Paragraph 2 (1-2 sentences): Identify task urgency — summarize which tasks or areas appear to be need-to-have (urgent, blocking, critical) versus nice-to-have (improvements, suggestions, low priority).
 
-Paragraph 3 (1-2 sentences): Identify team assignment — based on the pages, features, or modules discussed, describe who the tasks appear to be assigned to. Use names or roles mentioned in the transcript.
+Paragraph 3 (1-2 sentences): Identify team assignment — based on the pages, features, or modules discussed, describe who the tasks appear to be assigned to. Use names or roles mentioned in the transcript.${multiVideoNote}
 
 Transcript:
 ${transcriptText}
@@ -375,7 +431,9 @@ export async function analyzeTranscriptWithAI(transcript: TranscriptEntry[], dbC
     { name: 'Anthropic Claude', fn: analyzeWithClaude, envCheck: () => !!process.env.ANTHROPIC_API_KEY },
     { name: 'OpenAI GPT-4', fn: analyzeWithOpenAI, envCheck: () => !!process.env.OPENAI_API_KEY },
     { name: 'OpenRouter (Free)', fn: analyzeWithOpenRouter, envCheck: () => !!process.env.OPENROUTER_API_KEY },
-    { name: 'Ollama (Local)', fn: analyzeWithOllama, envCheck: () => true }, // Always available if running
+    // Ollama only runs when explicitly configured — otherwise the localhost fetch
+    // always fails on Railway/serverless and just adds noise to the error trail.
+    { name: 'Ollama (Local)', fn: analyzeWithOllama, envCheck: () => !!process.env.OLLAMA_BASE_URL },
   ]
 
   const availableProviders = providers.filter(p => p.envCheck())

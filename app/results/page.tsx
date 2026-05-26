@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { getProcessingResults } from '@/lib/imageStorage'
+import { getProcessingResults, storeProcessingResults } from '@/lib/imageStorage'
 
 function generateLoomUrlWithTimestamp(videoId: string, timestampSeconds: number): string {
   return `https://www.loom.com/share/${videoId}?t=${timestampSeconds}`
@@ -32,18 +32,28 @@ interface Task {
   area?: string
   assignee?: string
   task_type?: string
+  // 1-based source-video index for multi-video extractions. Undefined/1 for single-video.
+  video_index?: number
 }
 
 interface TranscriptLine {
   t: string  // timestamp label
   s: string  // spoken text
+  v?: number // 1-based source-video index (multi-video extractions only)
 }
 
 export default function Results() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [videoId, setVideoId] = useState('')
+  const [videoIds, setVideoIds] = useState<string[]>([])
   const [summary, setSummary] = useState('')
   const [transcript, setTranscript] = useState<TranscriptLine[]>([])
+  // Set after the initial load when we know which extraction_results row this
+  // page is showing. Required to enable the "add another Loom video" flow.
+  const [extractionId, setExtractionId] = useState<string | null>(null)
+  const [appendUrl, setAppendUrl] = useState('')
+  const [appending, setAppending] = useState(false)
+  const [appendError, setAppendError] = useState<string | null>(null)
   const [editingSummary, setEditingSummary] = useState(false)
   const [editedSummary, setEditedSummary] = useState('')
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null)
@@ -83,6 +93,7 @@ export default function Results() {
     const loadResults = async () => {
       let loadedTasks: any[] = []
       let loadedVideoId = ''
+      let loadedVideoIds: string[] = []
       let loadedSummary = ''
 
       let sessionTranscript: TranscriptLine[] = []
@@ -93,6 +104,7 @@ export default function Results() {
           if (data.tasks?.length > 0) {
             loadedTasks = data.tasks
             loadedVideoId = data.videoId || ''
+            loadedVideoIds = Array.isArray(data.videoIds) ? data.videoIds : []
             loadedSummary = data.summary || ''
             if (data.transcript?.length) sessionTranscript = data.transcript
           }
@@ -107,6 +119,7 @@ export default function Results() {
           if (idb?.tasks?.length > 0) {
             loadedTasks = idb.tasks
             loadedVideoId = idb.videoId || ''
+            loadedVideoIds = Array.isArray((idb as any).videoIds) ? (idb as any).videoIds : []
             loadedSummary = (idb as any).summary || ''
           }
           if ((idb as any)?.transcript?.length) idbTranscript = (idb as any).transcript
@@ -136,7 +149,25 @@ export default function Results() {
 
       setTasks(tasksWithIds)
       setVideoId(loadedVideoId)
+      // Fall back to the single legacy videoId for older saved extractions.
+      setVideoIds(loadedVideoIds.length > 0 ? loadedVideoIds : (loadedVideoId ? [loadedVideoId] : []))
       setSummary(loadedSummary)
+
+      // Capture the extraction row id (set by the home-page submit or the
+      // /result/[id] loader). When present, the "add another Loom video"
+      // flow is enabled — without it, we have no row to update.
+      try {
+        const fromKey = sessionStorage.getItem('loomResults_extractionId')
+        if (fromKey) {
+          setExtractionId(fromKey)
+        } else {
+          const raw = sessionStorage.getItem('loomResults')
+          if (raw) {
+            const parsed = JSON.parse(raw)
+            if (parsed?.id) setExtractionId(parsed.id)
+          }
+        }
+      } catch {}
     }
 
     loadResults()
@@ -185,6 +216,53 @@ export default function Results() {
     setSelectedIds(selectedIds.size === tasks.length ? new Set() : new Set(tasks.map(t => t._id)))
   }
 
+  const handleAppendLoom = async () => {
+    const trimmed = appendUrl.trim()
+    if (!trimmed || !extractionId || appending) return
+    setAppending(true)
+    setAppendError(null)
+    try {
+      const res = await fetch('/api/process-loom/append', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: extractionId, loomUrl: trimmed }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data?.error || `HTTP ${res.status}`)
+      }
+
+      // Replace the in-memory session with the merged payload from the server.
+      const mergedTasks: Task[] = (data.tasks || []).map((t: any, i: number) => ({
+        ...t,
+        _id: t._id ?? String(i),
+      }))
+      setTasks(mergedTasks)
+      setVideoIds(Array.isArray(data.videoIds) ? data.videoIds : [])
+      if (data.videoId) setVideoId(data.videoId)
+      if (typeof data.summary === 'string') setSummary(data.summary)
+      if (Array.isArray(data.transcript)) setTranscript(data.transcript)
+
+      // Re-save so a refresh keeps the appended state.
+      try {
+        await storeProcessingResults(data)
+      } catch (idbErr) {
+        console.warn('[Results] IndexedDB store failed after append:', idbErr)
+      }
+      try {
+        sessionStorage.setItem('loomResults', JSON.stringify(data))
+        if (data.id) sessionStorage.setItem('loomResults_extractionId', data.id)
+        if (data.videoId) sessionStorage.setItem('loomResults_videoId', data.videoId)
+      } catch {}
+
+      setAppendUrl('')
+    } catch (e: any) {
+      setAppendError(e?.message || 'Failed to append video')
+    } finally {
+      setAppending(false)
+    }
+  }
+
   const handleExportPDF = async () => {
     const { jsPDF } = await import('jspdf')
     const { default: autoTable } = await import('jspdf-autotable')
@@ -194,6 +272,14 @@ export default function Results() {
     const mL = 15
     const mR = 15
     const cW = pageW - mL - mR
+
+    // Map a task back to its source video so deep-links go to the right Loom URL
+    // even when the extraction combines multiple videos.
+    const videoIdForTask = (t: Task) => {
+      const idx = (t.video_index || 1) - 1
+      return videoIds[idx] || videoId
+    }
+    const multiVideoPdf = videoCount > 1
 
     // ── helpers ──────────────────────────────────────────────────────
     const hr = (yPos: number) => {
@@ -274,7 +360,7 @@ export default function Results() {
     for (let i = 0; i < tasks.length; i++) {
       if (y > pageH - 25) break
       const t = tasks[i]
-      const url = generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds)
+      const url = generateLoomUrlWithTimestamp(videoIdForTask(t), t.timestamp_seconds)
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(20, 20, 60)
@@ -303,7 +389,8 @@ export default function Results() {
       taskPageNums[i] = doc.getNumberOfPages()
       y = 12
 
-      const taskUrl = generateLoomUrlWithTimestamp(videoId, task.timestamp_seconds)
+      const taskVid = videoIdForTask(task)
+      const taskUrl = generateLoomUrlWithTimestamp(taskVid, task.timestamp_seconds)
 
       // Header band
       doc.setFillColor(235, 238, 255)
@@ -311,7 +398,10 @@ export default function Results() {
       doc.setFontSize(8)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(90, 100, 170)
-      doc.text(`TASK ${i + 1} OF ${tasks.length}`, mL + 3, y + 5)
+      const taskHeaderLabel = multiVideoPdf
+        ? `TASK ${i + 1} OF ${tasks.length}  ·  VID ${task.video_index || 1}`
+        : `TASK ${i + 1} OF ${tasks.length}`
+      doc.text(taskHeaderLabel, mL + 3, y + 5)
       doc.setFontSize(13)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(10, 15, 70)
@@ -374,7 +464,7 @@ export default function Results() {
           const shot = shots[s]
           const imgSrc = shot.image_base64 || shot.image_url
           const shotUrl = shot.timestamp_seconds
-            ? generateLoomUrlWithTimestamp(videoId, shot.timestamp_seconds)
+            ? generateLoomUrlWithTimestamp(taskVid, shot.timestamp_seconds)
             : taskUrl
 
           if (y + imgH + 20 > pageH - 20) {
@@ -522,22 +612,29 @@ export default function Results() {
     }
 
     const nm = 'Not mentioned'
-    const tableRows = tasks.map((t, i) => [
-      t.task_name,
-      t.task_description || nm,
-      t.project || nm,
-      t.client || nm,
-      t.area || nm,
-      t.assignee || nm,
-      priorityLabel(t.priority),
-      t.complexity || nm,
-      t.task_type || 'Nice-to-have',
-      generateLoomUrlWithTimestamp(videoId, t.timestamp_seconds),
-    ])
+    const tableRows = tasks.map((t) => {
+      const baseRow = [
+        t.task_name,
+        t.task_description || nm,
+        t.project || nm,
+        t.client || nm,
+        t.area || nm,
+        t.assignee || nm,
+        priorityLabel(t.priority),
+        t.complexity || nm,
+        t.task_type || 'Nice-to-have',
+        generateLoomUrlWithTimestamp(videoIdForTask(t), t.timestamp_seconds),
+      ]
+      return multiVideoPdf ? [`Vid ${t.video_index || 1}`, ...baseRow] : baseRow
+    })
+
+    const tableHead = multiVideoPdf
+      ? [['Vid', 'Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
+      : [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
 
     autoTable(doc, {
       startY: y,
-      head: [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']],
+      head: tableHead,
       body: tableRows,
       theme: 'grid',
       rowPageBreak: 'avoid',
@@ -558,22 +655,38 @@ export default function Results() {
       alternateRowStyles: {
         fillColor: [248, 249, 252] as [number, number, number],
       },
-      columnStyles: {
-        0: { cellWidth: 24 },
-        1: { cellWidth: 36 },
-        2: { cellWidth: 16 },
-        3: { cellWidth: 16 },
-        4: { cellWidth: 16 },
-        5: { cellWidth: 16 },
-        6: { cellWidth: 12 },
-        7: { cellWidth: 12 },
-        8: { cellWidth: 18 },
-        9: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
-      },
+      columnStyles: multiVideoPdf
+        ? {
+            0: { cellWidth: 10 },
+            1: { cellWidth: 24 },
+            2: { cellWidth: 32 },
+            3: { cellWidth: 14 },
+            4: { cellWidth: 14 },
+            5: { cellWidth: 14 },
+            6: { cellWidth: 14 },
+            7: { cellWidth: 12 },
+            8: { cellWidth: 12 },
+            9: { cellWidth: 18 },
+            10: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
+          }
+        : {
+            0: { cellWidth: 24 },
+            1: { cellWidth: 36 },
+            2: { cellWidth: 16 },
+            3: { cellWidth: 16 },
+            4: { cellWidth: 16 },
+            5: { cellWidth: 16 },
+            6: { cellWidth: 12 },
+            7: { cellWidth: 12 },
+            8: { cellWidth: 18 },
+            9: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
+          },
       margin: { left: mL, right: mR },
       didDrawCell: (data: any) => {
-        // Add a clickable link over every URL cell (column 9, skip header row)
-        if (data.column.index === 9 && data.row.index >= 0 && data.row.section === 'body') {
+        // Add a clickable link over every URL cell. Column index shifts to 10
+        // when the multi-video "Vid" column is prepended.
+        const urlColumn = multiVideoPdf ? 10 : 9
+        if (data.column.index === urlColumn && data.row.index >= 0 && data.row.section === 'body') {
           const url = String(data.cell.raw || '')
           if (url.startsWith('http')) {
             doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url })
@@ -677,6 +790,17 @@ export default function Results() {
     doc.save(`loom-tasks-${titleSlug}-${dateSlug}.pdf`)
   }
 
+  // Derived: how many source videos this extraction spans. Single-video saves
+  // before this feature shipped have videoIds === [] but a single videoId set —
+  // we count both and any video_index claimed by tasks/transcript.
+  const videoCount = Math.max(
+    videoIds.length,
+    ...tasks.map(t => t.video_index || 1),
+    ...transcript.map(t => t.v || 1),
+    1,
+  )
+  const isMultiVideo = videoCount > 1
+
   if (tasks.length === 0) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50">
@@ -738,6 +862,53 @@ export default function Results() {
             </button>
           </div>
         </div>
+
+        {/* Add another Loom video to this extraction */}
+        {extractionId && (
+          <div className="bg-white border-2 border-purple-200 p-5 mb-6">
+            <div className="flex items-start gap-3">
+              <div className="text-2xl flex-shrink-0">➕</div>
+              <div className="flex-1 min-w-0">
+                <h2 className="text-lg font-bold text-purple-900">Add another Loom video</h2>
+                <p className="text-sm text-gray-600 mt-0.5 mb-3">
+                  Process another Loom and merge its tasks into this extraction. The new video becomes
+                  Vid {(videoIds.length || 1) + 1}.
+                </p>
+                <form
+                  onSubmit={e => { e.preventDefault(); handleAppendLoom() }}
+                  className="flex flex-col sm:flex-row gap-2"
+                >
+                  <input
+                    type="url"
+                    value={appendUrl}
+                    onChange={e => setAppendUrl(e.target.value)}
+                    placeholder="https://www.loom.com/share/..."
+                    disabled={appending}
+                    required
+                    className="flex-1 px-4 py-2.5 text-gray-900 border-2 border-gray-300 focus:outline-none focus:border-purple-500 disabled:bg-gray-100"
+                  />
+                  <button
+                    type="submit"
+                    disabled={appending || !appendUrl.trim()}
+                    className="flex-shrink-0 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white px-5 py-2.5 font-semibold transition-colors border-2 border-purple-700 disabled:border-gray-400"
+                  >
+                    {appending ? 'Processing…' : '+ Add and process'}
+                  </button>
+                </form>
+                {appendError && (
+                  <div className="mt-3 bg-red-50 border-2 border-red-300 text-red-800 text-sm px-3 py-2">
+                    {appendError}
+                  </div>
+                )}
+                {appending && (
+                  <p className="text-xs text-gray-500 mt-2">
+                    Downloading the new video, transcribing, running AI analysis, and capturing screenshots — this can take a few minutes.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Summary */}
         {summary && (
@@ -846,6 +1017,11 @@ export default function Results() {
                           <h2 className="text-xl font-bold text-gray-900">
                             {displayIndex + 1}. {task.task_name}
                           </h2>
+                          {isMultiVideo && (
+                            <span className="inline-block bg-purple-100 text-purple-800 text-sm font-semibold px-3 py-1 border border-purple-300">
+                              🎬 Vid {task.video_index || 1}
+                            </span>
+                          )}
                           <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border border-indigo-300">
                             ⏱ {task.timestamp_label}
                           </span>
@@ -983,14 +1159,33 @@ export default function Results() {
         {/* Transcript */}
         {transcript.length > 0 && (
           <div className="mt-10 border-t-2 border-gray-200 pt-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-4">📝 Full Transcript</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-4">
+              📝 Full Transcript
+              {isMultiVideo && (
+                <span className="text-sm font-normal text-gray-500 ml-2">
+                  (combined from {videoCount} videos)
+                </span>
+              )}
+            </h2>
             <div className="bg-white border-2 border-gray-200 divide-y divide-gray-100 max-h-[600px] overflow-y-auto">
-              {transcript.map((line, i) => (
-                <div key={i} className="flex gap-4 px-4 py-2.5 hover:bg-gray-50">
-                  <span className="text-xs font-mono font-semibold text-indigo-500 mt-0.5 flex-shrink-0 w-12">{line.t}</span>
-                  <span className="text-sm text-gray-700 leading-relaxed">{line.s}</span>
-                </div>
-              ))}
+              {transcript.map((line, i) => {
+                const currentV = line.v || 1
+                const prevV = i > 0 ? (transcript[i - 1].v || 1) : null
+                const showVideoDivider = isMultiVideo && currentV !== prevV
+                return (
+                  <div key={i}>
+                    {showVideoDivider && (
+                      <div className="bg-purple-50 px-4 py-2 border-y-2 border-purple-200">
+                        <span className="text-sm font-bold text-purple-800">🎬 Vid {currentV}</span>
+                      </div>
+                    )}
+                    <div className="flex gap-4 px-4 py-2.5 hover:bg-gray-50">
+                      <span className="text-xs font-mono font-semibold text-indigo-500 mt-0.5 flex-shrink-0 w-12">{line.t}</span>
+                      <span className="text-sm text-gray-700 leading-relaxed">{line.s}</span>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           </div>
         )}

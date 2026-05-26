@@ -22,7 +22,8 @@ function historyDisplayName(createdAt: string): string {
 }
 
 export default function Home() {
-  const [loomUrl, setLoomUrl] = useState('')
+  // Multiple Loom URLs are kept in submit order — labeled Vid 1, Vid 2, ... in the UI.
+  const [loomUrls, setLoomUrls] = useState<string[]>([''])
   const [transcript, setTranscript] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<{message: string, needsManualTranscript?: boolean} | null>(null)
@@ -72,6 +73,24 @@ export default function Home() {
     }
   }, [error])
 
+  // Manual transcript only pairs with a single video — collapse extra slots if
+  // the user enables it while they have multiple URLs queued.
+  useEffect(() => {
+    if (useManualTranscript && loomUrls.length > 1) {
+      setLoomUrls(prev => [prev[0] ?? ''])
+    }
+  }, [useManualTranscript, loomUrls.length])
+
+  const cleanedLoomUrls = loomUrls.map(u => u.trim()).filter(Boolean)
+  // Revision Notes Mode does not yet support multiple videos — keep it single-URL.
+  const canAddAnother = mode === 'task' && !useManualTranscript
+
+  const updateUrlAt = (i: number, value: string) =>
+    setLoomUrls(prev => prev.map((u, idx) => (idx === i ? value : u)))
+  const addUrlSlot = () => setLoomUrls(prev => [...prev, ''])
+  const removeUrlAt = (i: number) =>
+    setLoomUrls(prev => prev.length === 1 ? prev : prev.filter((_, idx) => idx !== i))
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -84,7 +103,7 @@ export default function Home() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            loomUrl,
+            loomUrl: cleanedLoomUrls[0] || '',
             manualTranscript: useManualTranscript ? transcript : null,
           }),
         })
@@ -131,7 +150,7 @@ export default function Home() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          loomUrl,
+          loomUrls: cleanedLoomUrls,
           manualTranscript: useManualTranscript ? transcript : null,
         }),
       })
@@ -170,6 +189,7 @@ export default function Home() {
         try {
           console.log('[App] 💾 Attempting sessionStorage...')
           sessionStorage.setItem('loomResults', JSON.stringify(data))
+          if (data.id) sessionStorage.setItem('loomResults_extractionId', data.id)
           console.log('[App] ✅ sessionStorage SUCCESS')
           storageSuccess = true
         } catch (quotaError) {
@@ -339,21 +359,55 @@ export default function Home() {
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
-              <label htmlFor="loomUrl" className="block text-sm font-medium text-gray-700 mb-2">
-                Loom Video URL
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {loomUrls.length > 1 ? 'Loom Video URLs' : 'Loom Video URL'}
               </label>
-              <input
-                type="url"
-                id="loomUrl"
-                value={loomUrl}
-                onChange={(e) => setLoomUrl(e.target.value)}
-                placeholder="https://www.loom.com/share/..."
-                required
-                className="w-full px-4 py-3 text-gray-900 border-2 border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
-              />
-              <p className="mt-2 text-sm text-gray-500">
-                Paste a public Loom video link
-              </p>
+              <div className="space-y-2">
+                {loomUrls.map((url, i) => (
+                  <div key={i} className="flex items-stretch gap-2">
+                    {loomUrls.length > 1 && (
+                      <span className="flex-shrink-0 inline-flex items-center px-3 bg-indigo-50 border-2 border-indigo-200 text-indigo-700 text-sm font-bold">
+                        Vid {i + 1}
+                      </span>
+                    )}
+                    <input
+                      type="url"
+                      id={i === 0 ? 'loomUrl' : `loomUrl-${i}`}
+                      value={url}
+                      onChange={e => updateUrlAt(i, e.target.value)}
+                      placeholder="https://www.loom.com/share/..."
+                      required={i === 0}
+                      className="flex-1 px-4 py-3 text-gray-900 border-2 border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                    />
+                    {loomUrls.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => removeUrlAt(i)}
+                        title="Remove this video"
+                        className="flex-shrink-0 px-3 border-2 border-gray-300 text-gray-500 hover:border-red-400 hover:text-red-600 hover:bg-red-50"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3">
+                <p className="text-sm text-gray-500">
+                  {mode === 'task' && loomUrls.length > 1
+                    ? `Transcripts from all ${loomUrls.length} videos will be combined into one extraction.`
+                    : 'Paste a public Loom video link'}
+                </p>
+                {canAddAnother && (
+                  <button
+                    type="button"
+                    onClick={addUrlSlot}
+                    className="flex-shrink-0 text-sm font-semibold text-indigo-700 hover:text-indigo-900"
+                  >
+                    + Add another Loom video
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="border-t-2 border-gray-200 pt-6">
@@ -416,7 +470,7 @@ You can also paste plain text without timestamps - we'll assign them automatical
 
             <button
               type="submit"
-              disabled={!loomUrl}
+              disabled={cleanedLoomUrls.length === 0}
               className={`w-full text-white py-4 px-6 font-semibold text-lg focus:outline-none focus:ring-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors ${
                 mode === 'revision'
                   ? 'bg-amber-500 hover:bg-amber-600 focus:ring-amber-400'
