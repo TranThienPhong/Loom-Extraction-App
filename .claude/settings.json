@@ -22,7 +22,9 @@
       "Bash(curl -s --max-time 30 http://localhost:3000/)",
       "Bash(npx tsx *)",
       "Bash(curl -s --max-time 30 http://localhost:3000/results)",
-      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST --max-time 5 -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/process-loom/append)"
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST --max-time 5 -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/process-loom/append)",
+      "Bash(apt list *)",
+      "Bash(sudo apt-get install -y poppler-utils)"
     ],
     "additionalDirectories": [
       "/home/kaitran/Loom-Extraction-App"

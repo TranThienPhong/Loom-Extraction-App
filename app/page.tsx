@@ -29,6 +29,10 @@ export default function Home() {
   const [error, setError] = useState<{message: string, needsManualTranscript?: boolean} | null>(null)
   const [useManualTranscript, setUseManualTranscript] = useState(false)
   const [mode, setMode] = useState<'task' | 'revision'>('task')
+  // Task List mode supports two input sources: Loom videos or a PDF upload.
+  // Revision Notes mode is Loom-only (per scope).
+  const [taskSource, setTaskSource] = useState<'loom' | 'pdf'>('loom')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [history, setHistory] = useState<HistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
@@ -82,8 +86,10 @@ export default function Home() {
   }, [useManualTranscript, loomUrls.length])
 
   const cleanedLoomUrls = loomUrls.map(u => u.trim()).filter(Boolean)
+  // PDF source uses a different input affordance — hide the Loom URL controls.
+  const isPdfSource = mode === 'task' && taskSource === 'pdf'
   // Revision Notes Mode does not yet support multiple videos — keep it single-URL.
-  const canAddAnother = mode === 'task' && !useManualTranscript
+  const canAddAnother = mode === 'task' && taskSource === 'loom' && !useManualTranscript
 
   const updateUrlAt = (i: number, value: string) =>
     setLoomUrls(prev => prev.map((u, idx) => (idx === i ? value : u)))
@@ -144,16 +150,26 @@ export default function Home() {
       }
 
       // ── Task List Mode ───────────────────────────────────────────────
-      const response = await fetch('/api/process-loom', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          loomUrls: cleanedLoomUrls,
-          manualTranscript: useManualTranscript ? transcript : null,
-        }),
-      })
+      let response: Response
+      if (taskSource === 'pdf') {
+        if (!pdfFile) {
+          setError({ message: 'Please choose a PDF file to upload' })
+          setLoading(false)
+          return
+        }
+        const form = new FormData()
+        form.append('file', pdfFile)
+        response = await fetch('/api/process-pdf', { method: 'POST', body: form })
+      } else {
+        response = await fetch('/api/process-loom', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            loomUrls: cleanedLoomUrls,
+            manualTranscript: useManualTranscript ? transcript : null,
+          }),
+        })
+      }
 
       const data = await response.json()
       
@@ -358,6 +374,74 @@ export default function Home() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-6">
+            {/* Source toggle: only shown in Task List mode (Revision is Loom-only). */}
+            {mode === 'task' && (
+              <div>
+                <p className="text-sm font-semibold text-gray-700 mb-2">Source</p>
+                <div className="inline-flex border-2 border-gray-200">
+                  <button
+                    type="button"
+                    onClick={() => { setTaskSource('loom'); setError(null) }}
+                    className={`px-4 py-2 text-sm font-semibold transition-colors ${
+                      taskSource === 'loom'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    🎥 Loom URL
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setTaskSource('pdf'); setError(null) }}
+                    className={`px-4 py-2 text-sm font-semibold transition-colors border-l-2 border-gray-200 ${
+                      taskSource === 'pdf'
+                        ? 'bg-indigo-600 text-white'
+                        : 'bg-white text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    📄 PDF Upload
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {isPdfSource ? (
+              <div>
+                <label htmlFor="pdfFile" className="block text-sm font-medium text-gray-700 mb-2">
+                  PDF File
+                </label>
+                <label
+                  htmlFor="pdfFile"
+                  className={`flex flex-col items-center justify-center w-full px-4 py-8 border-2 border-dashed cursor-pointer transition-colors ${
+                    pdfFile
+                      ? 'border-indigo-400 bg-indigo-50'
+                      : 'border-gray-300 bg-gray-50 hover:border-indigo-400 hover:bg-indigo-50'
+                  }`}
+                >
+                  {pdfFile ? (
+                    <>
+                      <div className="text-3xl mb-2">📄</div>
+                      <div className="text-sm font-semibold text-gray-900">{pdfFile.name}</div>
+                      <div className="text-xs text-gray-500 mt-1">{(pdfFile.size / 1024).toFixed(0)} KB · click to replace</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-3xl mb-2 text-gray-400">📄</div>
+                      <div className="text-sm font-semibold text-gray-700">Click to choose a PDF</div>
+                      <div className="text-xs text-gray-500 mt-1">Tasks, images, and Loom links will be extracted from the document</div>
+                    </>
+                  )}
+                  <input
+                    id="pdfFile"
+                    type="file"
+                    accept="application/pdf,.pdf"
+                    onChange={e => setPdfFile(e.target.files?.[0] || null)}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            ) : (
+            <>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 {loomUrls.length > 1 ? 'Loom Video URLs' : 'Loom Video URL'}
@@ -467,10 +551,12 @@ You can also paste plain text without timestamps - we'll assign them automatical
                 </div>
               )}
             </div>
+            </>
+            )}
 
             <button
               type="submit"
-              disabled={cleanedLoomUrls.length === 0}
+              disabled={isPdfSource ? !pdfFile : cleanedLoomUrls.length === 0}
               className={`w-full text-white py-4 px-6 font-semibold text-lg focus:outline-none focus:ring-2 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors ${
                 mode === 'revision'
                   ? 'bg-amber-500 hover:bg-amber-600 focus:ring-amber-400'

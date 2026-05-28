@@ -7,10 +7,12 @@
 import { getReviewPool } from './reviewDb'
 
 export type ExtractionMode = 'task' | 'revision'
+export type ExtractionSource = 'loom' | 'pdf'
 
 export interface ExtractionResultSummary {
   id: string
   mode: ExtractionMode
+  source: ExtractionSource
   title: string | null
   summary: string | null
   video_id: string | null
@@ -44,6 +46,7 @@ export function generateResultId(now = new Date()): string {
 
 export async function saveExtractionResult(opts: {
   mode: ExtractionMode
+  source?: ExtractionSource
   title?: string | null
   summary?: string | null
   videoId?: string | null
@@ -57,11 +60,12 @@ export async function saveExtractionResult(opts: {
   const db = getReviewPool()
   await db.query(
     `INSERT INTO extraction_results
-       (id, mode, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)`,
+       (id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, payload)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
     [
       id,
       opts.mode,
+      opts.source ?? 'loom',
       opts.title ?? null,
       opts.summary ?? null,
       opts.videoId ?? null,
@@ -78,7 +82,7 @@ export async function saveExtractionResult(opts: {
 export async function listExtractionResults(limit = 50): Promise<ExtractionResultSummary[]> {
   const db = getReviewPool()
   const res = await db.query(
-    `SELECT id, mode, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, created_at
+    `SELECT id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, created_at
        FROM extraction_results
        ORDER BY created_at DESC
        LIMIT $1`,
@@ -90,7 +94,7 @@ export async function listExtractionResults(limit = 50): Promise<ExtractionResul
 export async function getExtractionResult(id: string): Promise<ExtractionResultFull | null> {
   const db = getReviewPool()
   const res = await db.query(
-    `SELECT id, mode, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, payload, created_at
+    `SELECT id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, payload, created_at
        FROM extraction_results
        WHERE id = $1`,
     [id],
