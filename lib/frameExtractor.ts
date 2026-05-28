@@ -42,6 +42,29 @@ export async function getVideoDuration(videoPath: string): Promise<number | null
 }
 
 /**
+ * Validate a video file is decodable before attempting frame extraction.
+ * Returns a short diagnostic string when the file looks broken, null when OK.
+ * Cheap to call: ffprobe just reads the container header.
+ */
+export async function validateVideoFile(videoPath: string): Promise<string | null> {
+  if (!fs.existsSync(videoPath)) return `Video file not found: ${videoPath}`
+  const stats = fs.statSync(videoPath)
+  if (stats.size === 0) return `Video file is empty (0 bytes): ${videoPath}`
+  try {
+    const { stdout } = await execAsync(
+      `ffprobe -v error -select_streams v:0 -show_entries stream=codec_type,duration -of default=noprint_wrappers=1 "${videoPath}"`,
+      { timeout: 15000 }
+    )
+    if (!stdout.includes('codec_type=video')) {
+      return `Video file has no decodable video stream (size=${stats.size} bytes): ${videoPath}`
+    }
+    return null
+  } catch (err: any) {
+    return `ffprobe failed on video (size=${stats.size} bytes): ${err?.stderr?.toString?.().trim() || err?.message || err}`
+  }
+}
+
+/**
  * Extracts a frame from a video at a specific timestamp using ffmpeg
  * Requires ffmpeg to be installed on the system
  * Install: sudo apt-get install ffmpeg (Ubuntu/Debian) or brew install ffmpeg (macOS)
@@ -97,7 +120,7 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
 
   // Retry logic with exponential backoff (for Railway resource issues)
   const maxRetries = 3
-  let lastError: Error | null = null
+  let lastError: any = null
   
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
@@ -133,26 +156,42 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
       
     } catch (error: any) {
       lastError = error
-      
-      // Check if it's a resource error that might benefit from retry
-      const isResourceError = error.message.includes('Resource temporarily unavailable') || 
-                             error.message.includes('pthread_create')
-      
+      const msg: string = error?.stderr?.toString?.().trim() || error?.message || String(error)
+      const shortMsg = msg.replace(/\s+/g, ' ').substring(0, 300)
+
+      // Resource exhaustion is the only error class that retrying actually helps with.
+      const isResourceError = msg.includes('Resource temporarily unavailable') ||
+                             msg.includes('pthread_create')
+
+      // These are deterministic — retrying with the same input will fail the same way.
+      // Fail fast so the caller gets a clear diagnosis instead of a 3x delay.
+      const isNonTransient =
+        msg.includes('Invalid data found') ||
+        msg.includes('moov atom not found') ||
+        msg.includes('Invalid argument') ||
+        msg.includes('No such file or directory') ||
+        msg.includes('does not contain any stream') ||
+        msg.includes('Could not find codec parameters')
+
       if (isResourceError && attempt < maxRetries) {
         const delayMs = Math.pow(2, attempt) * 1000 // Exponential backoff: 2s, 4s, 8s
-        console.log(`  ⚠️  Resource error on attempt ${attempt}/${maxRetries}, retrying in ${delayMs}ms...`)
+        console.log(`  ⚠️  Resource error on attempt ${attempt}/${maxRetries} at ${timestampSeconds}s, retrying in ${delayMs}ms: ${shortMsg}`)
         await new Promise(resolve => setTimeout(resolve, delayMs))
+      } else if (isNonTransient) {
+        console.error(`  ❌ Non-transient ffmpeg error at ${timestampSeconds}s (skipping retries): ${shortMsg}`)
+        break
       } else if (attempt < maxRetries) {
-        console.log(`  ⚠️  Error on attempt ${attempt}/${maxRetries}, retrying...`)
+        console.log(`  ⚠️  Error on attempt ${attempt}/${maxRetries} at ${timestampSeconds}s, retrying: ${shortMsg}`)
         await new Promise(resolve => setTimeout(resolve, 1000)) // 1s delay for other errors
       } else {
-        console.error(`  ❌ All ${maxRetries} attempts failed for frame at ${timestampSeconds}s`)
+        console.error(`  ❌ All ${maxRetries} attempts failed for frame at ${timestampSeconds}s: ${shortMsg}`)
       }
     }
   }
-  
-  // All retries exhausted
-  throw new Error(`Failed to extract frame at ${timestampSeconds}s after ${maxRetries} attempts: ${lastError?.message}`)
+
+  // All retries exhausted (or we broke out on a non-transient error)
+  const finalMsg: string = lastError?.stderr?.toString?.().trim() || lastError?.message || 'unknown error'
+  throw new Error(`Failed to extract frame at ${timestampSeconds}s: ${finalMsg}`)
 }
 
 /**

@@ -33,11 +33,15 @@ export default function ResultLoaderPage() {
         const payload = row.payload || {}
 
         if (row.mode === 'task') {
+          // Inject the row id into the payload so the results page can later
+          // append more videos to this extraction (it needs to know which row).
+          const payloadWithId = { ...payload, id: row.id }
           const { storeProcessingResults } = await import('@/lib/imageStorage')
-          await storeProcessingResults(payload)
+          await storeProcessingResults(payloadWithId)
           try {
             sessionStorage.setItem('loomResults_videoId', payload.videoId || '')
-            sessionStorage.setItem('loomResults', JSON.stringify(payload))
+            sessionStorage.setItem('loomResults_extractionId', row.id)
+            sessionStorage.setItem('loomResults', JSON.stringify(payloadWithId))
           } catch {}
           router.replace('/results')
         } else if (row.mode === 'revision') {

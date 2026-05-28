@@ -12,7 +12,19 @@
       "Bash(cp /tmp/cleanup-test.ts /home/kaitran/Loom-Extraction-App/scripts/cleanup-test.ts)",
       "Bash(npx --yes tsx scripts/cleanup-test.ts)",
       "Bash(curl -sS http://localhost:3000/api/users)",
-      "Bash(curl -sS http://localhost:3000/)"
+      "Bash(curl -sS http://localhost:3000/)",
+      "Bash(ffmpeg -version)",
+      "Bash(ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 /home/kaitran/Loom-Extraction-App/temp/c87b815d739448049403eb2d651c9107.fhls-raw-1500.mp4)",
+      "Bash(ffmpeg -y -ss 100 -i /home/kaitran/Loom-Extraction-App/temp/c87b815d739448049403eb2d651c9107.fhls-raw-1500.mp4 -frames:v 1 -q:v 2 -loglevel error /tmp/probe_test.jpg)",
+      "Bash(rm -f /tmp/probe_test.jpg)",
+      "Bash(npx next *)",
+      "Bash(npm run *)",
+      "Bash(curl -s --max-time 30 http://localhost:3000/)",
+      "Bash(npx tsx *)",
+      "Bash(curl -s --max-time 30 http://localhost:3000/results)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" -X POST --max-time 5 -H 'Content-Type: application/json' -d '{}' http://localhost:3000/api/process-loom/append)",
+      "Bash(apt list *)",
+      "Bash(sudo apt-get install -y poppler-utils)"
     ],
     "additionalDirectories": [
       "/home/kaitran/Loom-Extraction-App"

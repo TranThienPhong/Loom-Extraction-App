@@ -16,6 +16,8 @@
     "jspdf-autotable": "^5.0.7",
     "next": "^16.2.1",
     "openai": "^6.32.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
     "pg": "^8.20.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
