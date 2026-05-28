@@ -380,6 +380,210 @@ function parseAIResponse(responseText: string): AIAnalysisResult[] {
 }
 
 /**
+ * PDF-extracted block fed to the AI for task synthesis.
+ * The `index` is the AI's handle back to the source block — used downstream
+ * to re-attach the right images and Loom URLs to each returned task.
+ */
+export interface PdfBlockForAI {
+  index: number
+  page: number
+  firstLine: string
+  text: string
+  hasImages: boolean
+  hasLoomUrls: boolean
+}
+
+/**
+ * Like AIAnalysisResult but with a `source_block_index` so the caller can
+ * re-attach images/URLs from the originating PDF block. Block-derived tasks
+ * don't have video timestamps — those fields are zero/empty.
+ */
+export interface PdfAIAnalysisResult extends Omit<AIAnalysisResult, 'video_index'> {
+  source_block_index: number
+}
+
+function buildPdfAnalysisPrompt(blocks: PdfBlockForAI[], dbContext = ''): string {
+  const blocksText = blocks
+    .map(b => `Block #${b.index} (page ${b.page})${b.hasImages ? ' [has image]' : ''}${b.hasLoomUrls ? ' [has loom link]' : ''}:\n${b.text}`)
+    .join('\n\n---\n\n')
+
+  return `You are analyzing extracted blocks from a PDF document where someone has written feedback, change requests, or bug reports for a software product. Each block was extracted in reading order from the PDF.
+
+Your task: Identify EVERY block that describes a task, fix, change, or bug, and convert it into a structured task entry. Skip blocks that are pure noise (document titles, page footers, screenshot captions without actionable content, single-word labels).
+${dbContext ? '\n' + dbContext + '\n' : ''}
+Here are the PDF blocks:
+
+${blocksText}
+
+Instructions:
+1. Look for blocks that describe something to fix, build, change, or improve. Common patterns: "TEAM:", "TASKS:", "BUG:", "MY DAY:", "ADMIN PAGE:", "PROJECTS:", "GLOBAL:" — these section prefixes usually mark a task. But also accept tasks without prefixes if the block clearly describes work.
+2. For each real task, create:
+   - A clear, actionable task_name (5-10 words). Do NOT start it with a number, ordinal, or the section prefix.
+   - A concise task_description (2-3 sentences, ~50 words) summarizing what needs doing.
+3. If a section prefix like "TEAM:" or "BUG:" appears, use it as a hint for the area or task_type — e.g., "BUG:" implies a fix task; "GLOBAL:" implies app-wide scope.
+4. For project, client, area, and assignee:
+   - First try to extract them from the block text.
+   - If not present in the text, pick the BEST matching option from the Reference Database above (if provided).
+   - Leave empty ONLY if there is no reasonable match.
+   - **ASSIGNEE — CRITICAL**: PDF text may have typos or abbreviated names. Fuzzy-match to the closest USERS entry (e.g. "Jonas"/"Yaunius"→Jaunius, "Phong"/"Fong"→Phong). Never leave the raw mispelled name.
+5. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default to 3.0 if not signaled.
+6. Complexity: one of "SupC", "COMP", "MOD", "SIMP".
+7. Task Type: "Need-to-have" only if the block explicitly marks urgency/blocking/critical. Otherwise "Nice-to-have".
+8. **source_block_index**: set to the Block # the task came from. This is REQUIRED — it's how we re-attach the right screenshots and Loom links.
+
+If a single block contains MULTIPLE distinct tasks, return multiple task entries all sharing the same source_block_index.
+Skip blocks that aren't real tasks — don't pad the list.
+
+Return ONLY a JSON array with no additional text, explanation, or markdown formatting. Each object must have exactly these fields:
+{
+  "task_name": "<short descriptive title — no leading numbers or section prefix>",
+  "task_description": "<concise description>",
+  "priority": <number e.g. 3.0>,
+  "complexity": "<SupC|COMP|MOD|SIMP>",
+  "project": "<project name from text or database>",
+  "client": "<client name from text or database>",
+  "area": "<area/job role from text or database>",
+  "assignee": "<assignee name from text or database>",
+  "task_type": "<Need-to-have|Nice-to-have>",
+  "source_block_index": <integer matching one of the Block # values above>
+}
+
+Example:
+[
+  {
+    "task_name": "Build returned-tasks log on admin page",
+    "task_description": "Add a section on the admin page that lists tasks returned by team members so admins/executives can identify managers with repeat returns.",
+    "priority": 3.0,
+    "complexity": "MOD",
+    "project": "Loomster",
+    "client": "Mars",
+    "area": "Admin",
+    "assignee": "Phong",
+    "task_type": "Nice-to-have",
+    "source_block_index": 8
+  }
+]
+
+Return the JSON array now:`
+}
+
+/**
+ * Multi-provider PDF block analyzer. Tries Anthropic first, falls back through
+ * the same chain as the Loom flow.
+ */
+export async function analyzePdfBlocksWithAI(blocks: PdfBlockForAI[], dbContext = ''): Promise<PdfAIAnalysisResult[]> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY environment variable is not set')
+
+  const prompt = buildPdfAnalysisPrompt(blocks, dbContext)
+
+  // Reuse the same Sonnet→Haiku fallback ladder as the Loom path.
+  const MODELS = ['claude-sonnet-4-6', 'claude-haiku-4-5']
+  const RETRIES_PER_MODEL = 2
+  const BASE_DELAY_MS = [4000, 8000]
+
+  const anthropic = new Anthropic({ apiKey })
+  let lastError: any = null
+  for (const model of MODELS) {
+    for (let attempt = 1; attempt <= RETRIES_PER_MODEL; attempt++) {
+      try {
+        console.log(`PDF analysis: Claude (${model}) attempt ${attempt}/${RETRIES_PER_MODEL}`)
+        const message = await anthropic.messages.create({
+          model,
+          max_tokens: 16384,
+          messages: [{ role: 'user', content: prompt }],
+        })
+        const responseText = message.content[0].type === 'text' ? message.content[0].text : ''
+        return parsePdfAIResponse(responseText)
+      } catch (error: any) {
+        lastError = error
+        const isOverloaded = error.status === 529 || (typeof error.message === 'string' && error.message.includes('overloaded'))
+        const isRateLimit = error.status === 429 || (typeof error.message === 'string' && error.message.includes('rate_limit'))
+        const retriable = isOverloaded || isRateLimit
+        if (!retriable) {
+          console.error('PDF analysis Claude error (non-retriable):', error.message)
+          throw new Error(`Claude API failed: ${error.message}`)
+        }
+        if (attempt < RETRIES_PER_MODEL) {
+          const jitter = Math.floor(Math.random() * 1500)
+          const delay = BASE_DELAY_MS[attempt - 1] + jitter
+          console.warn(`PDF Claude ${model} overloaded, retrying in ${Math.round(delay / 1000)}s`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        console.warn(`PDF Claude ${model} exhausted, falling over to next model`)
+        break
+      }
+    }
+  }
+  throw new Error(`Claude API failed (all models overloaded): ${lastError?.message || 'unknown'}`)
+}
+
+function parsePdfAIResponse(responseText: string): PdfAIAnalysisResult[] {
+  console.log('PDF AI response:', responseText.substring(0, 400) + '...')
+  const cleaned = responseText
+    .replace(/```json\n/g, '')
+    .replace(/```\n/g, '')
+    .replace(/```/g, '')
+    .trim()
+  try {
+    const tasks = JSON.parse(cleaned)
+    if (!Array.isArray(tasks)) throw new Error('PDF response is not an array')
+    for (const t of tasks) {
+      if (typeof t.task_name !== 'string' || typeof t.task_description !== 'string') {
+        throw new Error('Invalid PDF task structure')
+      }
+      if (typeof t.source_block_index !== 'number') {
+        throw new Error(`Task is missing required source_block_index: ${t.task_name}`)
+      }
+    }
+    console.log(`PDF AI returned ${tasks.length} tasks`)
+    return tasks
+  } catch (err) {
+    console.error('Failed to parse PDF AI response:', err)
+    throw new Error('AI returned invalid JSON format for PDF analysis. Please try again.')
+  }
+}
+
+/**
+ * Generate a brief summary of a PDF based on the extracted block text.
+ */
+export async function generatePdfSummary(blocks: PdfBlockForAI[]): Promise<string> {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return ''
+  const anthropic = new Anthropic({ apiKey })
+
+  // Cap to first ~40 blocks to keep the summary call cheap.
+  const sample = blocks.slice(0, 40).map(b => `[Block ${b.index}] ${b.text}`).join('\n\n')
+
+  try {
+    const message = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 512,
+      messages: [{
+        role: 'user',
+        content: `Based on these blocks extracted from a feedback PDF, write a structured summary with exactly 3 paragraphs separated by a blank line between each:
+
+Paragraph 1 (2-3 sentences): What is this document about — what product/feature/area is being discussed, and the overall nature of the feedback.
+
+Paragraph 2 (1-2 sentences): Identify task urgency — which areas appear need-to-have (urgent, blocking, critical) versus nice-to-have (improvements, suggestions).
+
+Paragraph 3 (1-2 sentences): Identify team assignment — based on the pages, features, or modules discussed, describe who the tasks appear to be assigned to.
+
+Blocks:
+${sample}
+
+Write only the 3 paragraphs with a blank line between each. No headings, no labels, no preamble.`,
+      }],
+    })
+    return message.content[0].type === 'text' ? message.content[0].text.trim() : ''
+  } catch (error) {
+    console.error('PDF summary generation failed:', error)
+    return ''
+  }
+}
+
+/**
  * Generate a brief summary of the video based on the transcript
  */
 export async function generateVideoSummary(transcript: TranscriptEntry[]): Promise<string> {

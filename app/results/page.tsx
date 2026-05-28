@@ -48,6 +48,9 @@ export default function Results() {
   const [videoIds, setVideoIds] = useState<string[]>([])
   const [summary, setSummary] = useState('')
   const [transcript, setTranscript] = useState<TranscriptLine[]>([])
+  // 'loom' | 'pdf' — drives whether to show video-only affordances (timestamp
+  // badges, "Watch in Loom" buttons, "Add another Loom video" card).
+  const [source, setSource] = useState<'loom' | 'pdf'>('loom')
   // Set after the initial load when we know which extraction_results row this
   // page is showing. Required to enable the "add another Loom video" flow.
   const [extractionId, setExtractionId] = useState<string | null>(null)
@@ -152,6 +155,20 @@ export default function Results() {
       // Fall back to the single legacy videoId for older saved extractions.
       setVideoIds(loadedVideoIds.length > 0 ? loadedVideoIds : (loadedVideoId ? [loadedVideoId] : []))
       setSummary(loadedSummary)
+
+      // Source ('pdf' or 'loom') determines which UI affordances render. Prefer
+      // sessionStorage (set by both the home submit and the /result/[id] loader);
+      // fall back to inferring from the data shape (no Loom URLs → PDF).
+      try {
+        const raw = sessionStorage.getItem('loomResults')
+        if (raw) {
+          const parsed = JSON.parse(raw)
+          if (parsed?.source === 'pdf') setSource('pdf')
+          else if (Array.isArray(parsed?.loomUrls) && parsed.loomUrls.length > 0) setSource('loom')
+          else if (parsed?.videoId && !parsed?.videoId.startsWith('pdf_')) setSource('loom')
+          else setSource('pdf')
+        }
+      } catch {}
 
       // Capture the extraction row id (set by the home-page submit or the
       // /result/[id] loader). When present, the "add another Loom video"
@@ -863,8 +880,9 @@ export default function Results() {
           </div>
         </div>
 
-        {/* Add another Loom video to this extraction */}
-        {extractionId && (
+        {/* Add another Loom video to this extraction. Hidden for PDF-source
+            extractions — those have no notion of a Loom video to add. */}
+        {extractionId && source === 'loom' && (
           <div className="bg-white border-2 border-purple-200 p-5 mb-6">
             <div className="flex items-start gap-3">
               <div className="text-2xl flex-shrink-0">➕</div>
@@ -1022,9 +1040,13 @@ export default function Results() {
                               🎬 Vid {task.video_index || 1}
                             </span>
                           )}
-                          <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border border-indigo-300">
-                            ⏱ {task.timestamp_label}
-                          </span>
+                          {/* Timestamp badge only when there IS a timestamp (PDF
+                              tasks don't have one). */}
+                          {task.timestamp_label && (
+                            <span className="inline-block bg-indigo-100 text-indigo-800 text-sm font-semibold px-3 py-1 border border-indigo-300">
+                              ⏱ {task.timestamp_label}
+                            </span>
+                          )}
                           {/* Urgency dropdown */}
                           <select
                             value={task.task_type || 'Nice-to-have'}
@@ -1097,17 +1119,26 @@ export default function Results() {
                               }
                             }}
                           />
-                          <a
-                            href={screenshot.timestamp_seconds
-                              ? generateLoomUrlWithTimestamp(videoId, screenshot.timestamp_seconds)
-                              : task.loom_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={e => e.stopPropagation()}
-                            className="absolute bottom-2 left-2 bg-black bg-opacity-75 hover:bg-opacity-90 text-white text-xs font-bold px-2 py-1 rounded shadow z-10"
-                          >
-                            ⏱ {screenshot.timestamp_label}
-                          </a>
+                          {/* Per-screenshot deep-link only when we have a real
+                              video to point at. PDF screenshots get a static
+                              label ("Image N") with no link. */}
+                          {source === 'loom' ? (
+                            <a
+                              href={screenshot.timestamp_seconds
+                                ? generateLoomUrlWithTimestamp(videoId, screenshot.timestamp_seconds)
+                                : task.loom_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={e => e.stopPropagation()}
+                              className="absolute bottom-2 left-2 bg-black bg-opacity-75 hover:bg-opacity-90 text-white text-xs font-bold px-2 py-1 rounded shadow z-10"
+                            >
+                              ⏱ {screenshot.timestamp_label}
+                            </a>
+                          ) : (
+                            <span className="absolute bottom-2 left-2 bg-black bg-opacity-75 text-white text-xs font-bold px-2 py-1 rounded shadow z-10">
+                              {screenshot.timestamp_label}
+                            </span>
+                          )}
                           <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-25 transition-all flex items-center justify-center pointer-events-none">
                             <span className="text-white font-semibold text-sm opacity-0 group-hover:opacity-100 transition-opacity drop-shadow">
                               🔍 Enlarge
@@ -1132,16 +1163,21 @@ export default function Results() {
                   </div>
                 ) : null}
 
-                <div className="mt-4">
-                  <a
-                    href={task.loom_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-block bg-indigo-600 text-white px-5 py-2.5 font-semibold hover:bg-indigo-700 transition-colors border-2 border-indigo-700 text-sm"
-                  >
-                    Watch in Loom
-                  </a>
-                </div>
+                {/* "Watch in Loom" only shows when there's a real Loom URL on
+                    the task. PDF tasks may or may not have one (depending on
+                    whether the PDF embedded a Loom link near the block). */}
+                {task.loom_url && (
+                  <div className="mt-4">
+                    <a
+                      href={task.loom_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-block bg-indigo-600 text-white px-5 py-2.5 font-semibold hover:bg-indigo-700 transition-colors border-2 border-indigo-700 text-sm"
+                    >
+                      Watch in Loom
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
           ))}
