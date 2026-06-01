@@ -55,6 +55,8 @@ export default function Results() {
   // page is showing. Required to enable the "add another Loom video" flow.
   const [extractionId, setExtractionId] = useState<string | null>(null)
   const [appendUrl, setAppendUrl] = useState('')
+  // PDF sessions append another PDF instead of a Loom URL.
+  const [appendFile, setAppendFile] = useState<File | null>(null)
   const [appending, setAppending] = useState(false)
   const [appendError, setAppendError] = useState<string | null>(null)
   const [editingSummary, setEditingSummary] = useState(false)
@@ -233,17 +235,31 @@ export default function Results() {
     setSelectedIds(selectedIds.size === tasks.length ? new Set() : new Set(tasks.map(t => t._id)))
   }
 
-  const handleAppendLoom = async () => {
-    const trimmed = appendUrl.trim()
-    if (!trimmed || !extractionId || appending) return
+  // Add another source to this session. Loom sessions append a Loom URL; PDF
+  // sessions append a PDF file. Both endpoints return the same merged payload
+  // shape, so success handling is shared.
+  const handleAppendSource = async () => {
+    if (!extractionId || appending) return
+    const trimmedUrl = appendUrl.trim()
+    if (source === 'pdf' ? !appendFile : !trimmedUrl) return
+
     setAppending(true)
     setAppendError(null)
     try {
-      const res = await fetch('/api/process-loom/append', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: extractionId, loomUrl: trimmed }),
-      })
+      let res: Response
+      if (source === 'pdf') {
+        const form = new FormData()
+        form.append('id', extractionId)
+        form.append('file', appendFile as File)
+        res = await fetch('/api/process-pdf/append', { method: 'POST', body: form })
+      } else {
+        res = await fetch('/api/process-loom/append', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: extractionId, loomUrl: trimmedUrl }),
+        })
+      }
+
       const data = await res.json()
       if (!res.ok) {
         throw new Error(data?.error || `HTTP ${res.status}`)
@@ -273,8 +289,9 @@ export default function Results() {
       } catch {}
 
       setAppendUrl('')
+      setAppendFile(null)
     } catch (e: any) {
-      setAppendError(e?.message || 'Failed to append video')
+      setAppendError(e?.message || `Failed to append ${source === 'pdf' ? 'PDF' : 'video'}`)
     } finally {
       setAppending(false)
     }
@@ -297,6 +314,9 @@ export default function Results() {
       return videoIds[idx] || videoId
     }
     const multiVideoPdf = videoCount > 1
+    // Provenance label depends on whether the parts are Loom videos or PDFs.
+    const partWordPdf = source === 'pdf' ? 'PDF' : 'VID'
+    const partColHeader = source === 'pdf' ? 'PDF' : 'Vid'
 
     // ── helpers ──────────────────────────────────────────────────────
     const hr = (yPos: number) => {
@@ -416,7 +436,7 @@ export default function Results() {
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(90, 100, 170)
       const taskHeaderLabel = multiVideoPdf
-        ? `TASK ${i + 1} OF ${tasks.length}  ·  VID ${task.video_index || 1}`
+        ? `TASK ${i + 1} OF ${tasks.length}  ·  ${partWordPdf} ${task.video_index || 1}`
         : `TASK ${i + 1} OF ${tasks.length}`
       doc.text(taskHeaderLabel, mL + 3, y + 5)
       doc.setFontSize(13)
@@ -642,11 +662,11 @@ export default function Results() {
         t.task_type || 'Nice-to-have',
         generateLoomUrlWithTimestamp(videoIdForTask(t), t.timestamp_seconds),
       ]
-      return multiVideoPdf ? [`Vid ${t.video_index || 1}`, ...baseRow] : baseRow
+      return multiVideoPdf ? [`${partColHeader} ${t.video_index || 1}`, ...baseRow] : baseRow
     })
 
     const tableHead = multiVideoPdf
-      ? [['Vid', 'Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
+      ? [[partColHeader, 'Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
       : [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
 
     autoTable(doc, {
@@ -817,6 +837,10 @@ export default function Results() {
     1,
   )
   const isMultiVideo = videoCount > 1
+  // Source-aware labels for the per-part provenance UI. A session's parts are
+  // Loom videos ("Vid N") or PDFs ("PDF N") depending on how it was created.
+  const partWord = source === 'pdf' ? 'PDF' : 'Vid'
+  const partEmoji = source === 'pdf' ? '📄' : '🎬'
 
   if (tasks.length === 0) {
     return (
@@ -880,34 +904,62 @@ export default function Results() {
           </div>
         </div>
 
-        {/* Add another Loom video to this extraction. Hidden for PDF-source
-            extractions — those have no notion of a Loom video to add. */}
-        {extractionId && source === 'loom' && (
+        {/* Add another source to this session. Loom sessions append a Loom URL;
+            PDF sessions append another PDF. Both merge into ONE combined output,
+            task list, and PDF export, and regenerate the unified summary. */}
+        {extractionId && (
           <div className="bg-white border-2 border-purple-200 p-5 mb-6">
             <div className="flex items-start gap-3">
               <div className="text-2xl flex-shrink-0">➕</div>
               <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-bold text-purple-900">Add another Loom video</h2>
+                <h2 className="text-lg font-bold text-purple-900">
+                  {source === 'pdf' ? 'Add another PDF' : 'Add another Loom video'}
+                </h2>
                 <p className="text-sm text-gray-600 mt-0.5 mb-3">
-                  Process another Loom and merge its tasks into this extraction. The new video becomes
-                  Vid {(videoIds.length || 1) + 1}.
+                  {source === 'pdf'
+                    ? `Upload another PDF and merge its tasks into this session. It becomes PDF ${videoCount + 1}, and the combined summary is regenerated.`
+                    : `Process another Loom and merge its tasks into this extraction. The new video becomes Vid ${(videoIds.length || 1) + 1}, and the combined summary is regenerated.`}
                 </p>
                 <form
-                  onSubmit={e => { e.preventDefault(); handleAppendLoom() }}
+                  onSubmit={e => { e.preventDefault(); handleAppendSource() }}
                   className="flex flex-col sm:flex-row gap-2"
                 >
-                  <input
-                    type="url"
-                    value={appendUrl}
-                    onChange={e => setAppendUrl(e.target.value)}
-                    placeholder="https://www.loom.com/share/..."
-                    disabled={appending}
-                    required
-                    className="flex-1 px-4 py-2.5 text-gray-900 border-2 border-gray-300 focus:outline-none focus:border-purple-500 disabled:bg-gray-100"
-                  />
+                  {source === 'pdf' ? (
+                    <label
+                      className={`flex-1 flex items-center gap-3 px-4 py-2.5 border-2 cursor-pointer transition-colors ${
+                        appending
+                          ? 'border-gray-300 bg-gray-100 cursor-not-allowed'
+                          : appendFile
+                            ? 'border-purple-400 bg-purple-50'
+                            : 'border-gray-300 bg-white hover:border-purple-400'
+                      }`}
+                    >
+                      <span className="text-xl">📄</span>
+                      <span className="text-sm text-gray-700 truncate">
+                        {appendFile ? appendFile.name : 'Click to choose a PDF…'}
+                      </span>
+                      <input
+                        type="file"
+                        accept="application/pdf,.pdf"
+                        disabled={appending}
+                        onChange={e => setAppendFile(e.target.files?.[0] || null)}
+                        className="hidden"
+                      />
+                    </label>
+                  ) : (
+                    <input
+                      type="url"
+                      value={appendUrl}
+                      onChange={e => setAppendUrl(e.target.value)}
+                      placeholder="https://www.loom.com/share/..."
+                      disabled={appending}
+                      required
+                      className="flex-1 px-4 py-2.5 text-gray-900 border-2 border-gray-300 focus:outline-none focus:border-purple-500 disabled:bg-gray-100"
+                    />
+                  )}
                   <button
                     type="submit"
-                    disabled={appending || !appendUrl.trim()}
+                    disabled={appending || (source === 'pdf' ? !appendFile : !appendUrl.trim())}
                     className="flex-shrink-0 bg-purple-600 hover:bg-purple-700 disabled:bg-gray-400 text-white px-5 py-2.5 font-semibold transition-colors border-2 border-purple-700 disabled:border-gray-400"
                   >
                     {appending ? 'Processing…' : '+ Add and process'}
@@ -920,7 +972,9 @@ export default function Results() {
                 )}
                 {appending && (
                   <p className="text-xs text-gray-500 mt-2">
-                    Downloading the new video, transcribing, running AI analysis, and capturing screenshots — this can take a few minutes.
+                    {source === 'pdf'
+                      ? 'Parsing the PDF, running AI analysis, and regenerating the combined summary — this can take a minute.'
+                      : 'Downloading the new video, transcribing, running AI analysis, and capturing screenshots — this can take a few minutes.'}
                   </p>
                 )}
               </div>
@@ -1037,7 +1091,7 @@ export default function Results() {
                           </h2>
                           {isMultiVideo && (
                             <span className="inline-block bg-purple-100 text-purple-800 text-sm font-semibold px-3 py-1 border border-purple-300">
-                              🎬 Vid {task.video_index || 1}
+                              {partEmoji} {partWord} {task.video_index || 1}
                             </span>
                           )}
                           {/* Timestamp badge only when there IS a timestamp (PDF
@@ -1199,7 +1253,7 @@ export default function Results() {
               📝 Full Transcript
               {isMultiVideo && (
                 <span className="text-sm font-normal text-gray-500 ml-2">
-                  (combined from {videoCount} videos)
+                  (combined from {videoCount} {source === 'pdf' ? 'PDFs' : 'videos'})
                 </span>
               )}
             </h2>
@@ -1212,7 +1266,7 @@ export default function Results() {
                   <div key={i}>
                     {showVideoDivider && (
                       <div className="bg-purple-50 px-4 py-2 border-y-2 border-purple-200">
-                        <span className="text-sm font-bold text-purple-800">🎬 Vid {currentV}</span>
+                        <span className="text-sm font-bold text-purple-800">{partEmoji} {partWord} {currentV}</span>
                       </div>
                     )}
                     <div className="flex gap-4 px-4 py-2.5 hover:bg-gray-50">

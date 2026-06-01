@@ -19,6 +19,9 @@ export interface ExtractionResultSummary {
   loom_url: string | null
   loom_urls: string[] | null
   video_ids: string[] | null
+  // Every uploaded PDF filename for PDF-source sessions, in add order. Null for
+  // Loom sessions and for rows created before multi-PDF support shipped.
+  pdf_file_names: string[] | null
   item_count: number
   created_at: string
 }
@@ -53,6 +56,7 @@ export async function saveExtractionResult(opts: {
   loomUrl?: string | null
   videoIds?: string[] | null
   loomUrls?: string[] | null
+  pdfFileNames?: string[] | null
   itemCount?: number
   payload: any
 }): Promise<{ id: string }> {
@@ -60,8 +64,8 @@ export async function saveExtractionResult(opts: {
   const db = getReviewPool()
   await db.query(
     `INSERT INTO extraction_results
-       (id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, payload)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)`,
+       (id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, pdf_file_names, item_count, payload)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb)`,
     [
       id,
       opts.mode,
@@ -72,6 +76,7 @@ export async function saveExtractionResult(opts: {
       opts.loomUrl ?? null,
       opts.videoIds ?? null,
       opts.loomUrls ?? null,
+      opts.pdfFileNames ?? null,
       opts.itemCount ?? 0,
       JSON.stringify(opts.payload),
     ],
@@ -82,7 +87,7 @@ export async function saveExtractionResult(opts: {
 export async function listExtractionResults(limit = 50): Promise<ExtractionResultSummary[]> {
   const db = getReviewPool()
   const res = await db.query(
-    `SELECT id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, created_at
+    `SELECT id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, pdf_file_names, item_count, created_at
        FROM extraction_results
        ORDER BY created_at DESC
        LIMIT $1`,
@@ -94,7 +99,7 @@ export async function listExtractionResults(limit = 50): Promise<ExtractionResul
 export async function getExtractionResult(id: string): Promise<ExtractionResultFull | null> {
   const db = getReviewPool()
   const res = await db.query(
-    `SELECT id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, item_count, payload, created_at
+    `SELECT id, mode, source, title, summary, video_id, loom_url, video_ids, loom_urls, pdf_file_names, item_count, payload, created_at
        FROM extraction_results
        WHERE id = $1`,
     [id],
@@ -112,6 +117,7 @@ export async function getExtractionResult(id: string): Promise<ExtractionResultF
 export async function updateExtractionResult(id: string, opts: {
   loomUrls: string[]
   videoIds: string[]
+  pdfFileNames?: string[] | null
   itemCount: number
   summary?: string | null
   title?: string | null
@@ -120,12 +126,13 @@ export async function updateExtractionResult(id: string, opts: {
   const db = getReviewPool()
   await db.query(
     `UPDATE extraction_results
-        SET loom_urls = $2,
-            video_ids = $3,
-            item_count = $4,
-            summary    = COALESCE($5, summary),
-            title      = COALESCE($6, title),
-            payload    = $7::jsonb
+        SET loom_urls      = $2,
+            video_ids      = $3,
+            item_count     = $4,
+            summary        = COALESCE($5, summary),
+            title          = COALESCE($6, title),
+            pdf_file_names = COALESCE($7, pdf_file_names),
+            payload        = $8::jsonb
       WHERE id = $1`,
     [
       id,
@@ -134,6 +141,7 @@ export async function updateExtractionResult(id: string, opts: {
       opts.itemCount,
       opts.summary ?? null,
       opts.title ?? null,
+      opts.pdfFileNames ?? null,
       JSON.stringify(opts.payload),
     ],
   )

@@ -108,7 +108,8 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
     console.log(`Created frames directory: ${frameDir}`)
   }
 
-  // Generate unique filename
+  // Generate unique filename (keyed on the REQUESTED timestamp so the cache key
+  // and public URL still reflect what the task asked for, even if we clamp below)
   const videoBasename = path.basename(videoPath, path.extname(videoPath))
   const framePath = path.join(frameDir, `${videoBasename}_${timestampSeconds}s.jpg`)
 
@@ -116,6 +117,21 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
   if (fs.existsSync(framePath)) {
     console.log('Frame already extracted, using cached version')
     return framePath
+  }
+
+  // Clamp the seek to the actual video duration. AI-generated timestamps can
+  // exceed the video length (e.g. 1807s on a 10-minute clip), and seeking past
+  // EOF makes ffmpeg exit 0 while writing NO output file — which then surfaces
+  // downstream as a confusing ENOENT on statSync. Clamp to just before the end
+  // so we capture the last real frame instead of failing.
+  let seekSeconds = timestampSeconds
+  const duration = await getVideoDuration(videoPath)
+  if (duration !== null && timestampSeconds > duration - 0.5) {
+    seekSeconds = Math.max(0, duration - 1)
+    console.warn(
+      `  ⚠️  Requested timestamp ${timestampSeconds}s exceeds video duration ${duration.toFixed(1)}s; ` +
+      `clamping seek to ${seekSeconds.toFixed(1)}s`
+    )
   }
 
   // Retry logic with exponential backoff (for Railway resource issues)
@@ -127,11 +143,16 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
       // Accurate seek: pre-seek with -ss BEFORE -i to a nearby keyframe (fast),
       // then -ss AFTER -i to step forward to the exact frame. This avoids the
       // off-by-keyframe error where the screenshot showed the next/previous shot.
-      const preSeek = Math.max(0, timestampSeconds - 2)
-      const postSeek = timestampSeconds - preSeek
+      const preSeek = Math.max(0, seekSeconds - 2)
+      const postSeek = seekSeconds - preSeek
+      // -pix_fmt yuvj420p: JPEG/mjpeg requires full-range YUV. Loom videos are
+      // encoded with limited (TV) range, which makes the mjpeg encoder fail with
+      // "Non full-range YUV is non-standard ... ff_frame_thread_encoder_init failed".
+      // Tagging the output as a yuvj* (JPEG full-range) pixel format tells ffmpeg to
+      // auto-insert the limited→full range conversion the encoder expects.
       const command = preSeek > 0
-        ? `ffmpeg -y -ss ${preSeek} -i "${videoPath}" -ss ${postSeek} -frames:v 1 -q:v 2 -loglevel error "${framePath}"`
-        : `ffmpeg -y -i "${videoPath}" -ss ${timestampSeconds} -frames:v 1 -q:v 2 -loglevel error "${framePath}"`
+        ? `ffmpeg -y -ss ${preSeek} -i "${videoPath}" -ss ${postSeek} -frames:v 1 -q:v 2 -pix_fmt yuvj420p -loglevel error "${framePath}"`
+        : `ffmpeg -y -i "${videoPath}" -ss ${seekSeconds} -frames:v 1 -q:v 2 -pix_fmt yuvj420p -loglevel error "${framePath}"`
       
       const { stderr } = await execAsync(command, {
         maxBuffer: 1024 * 1024 * 10, // 10MB buffer
@@ -141,9 +162,14 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
         console.warn(`  ffmpeg stderr at ${timestampSeconds}s:`, stderr.trim().substring(0, 200))
       }
       
-      // Verify file exists and has content
+      // Verify file exists and has content. ffmpeg can exit 0 yet write nothing
+      // (e.g. it decoded no packets at the seek point), so check existence first
+      // rather than letting statSync throw a cryptic ENOENT.
+      if (!fs.existsSync(framePath)) {
+        throw new Error('ffmpeg wrote no output frame (no packets decoded at seek position)')
+      }
       const stats = fs.statSync(framePath)
-      
+
       if (stats.size === 0) {
         throw new Error('Frame file was created but is empty - ffmpeg may have failed')
       }
@@ -171,7 +197,9 @@ export async function extractFrame(options: FrameExtractionOptions): Promise<str
         msg.includes('Invalid argument') ||
         msg.includes('No such file or directory') ||
         msg.includes('does not contain any stream') ||
-        msg.includes('Could not find codec parameters')
+        msg.includes('Could not find codec parameters') ||
+        msg.includes('wrote no output frame') ||
+        msg.includes('ENOENT')
 
       if (isResourceError && attempt < maxRetries) {
         const delayMs = Math.pow(2, attempt) * 1000 // Exponential backoff: 2s, 4s, 8s

@@ -121,8 +121,11 @@ export async function POST(request: NextRequest) {
       // Transcript section on the results page renders the source text grouped
       // by block — gives the user a sense of what the PDF said.
       transcript: parsed.blocks.map(b => ({ t: `p${b.page}`, s: b.text })),
-      // Original filename for display.
+      // Original filename for display. pdfFileNames mirrors loomUrls so a PDF
+      // session can later gain more PDFs (see /api/process-pdf/append).
       pdfFileName: file.name,
+      pdfFileNames: [file.name],
+      pdfPartCount: 1,
       pdfPageCount: parsed.pageCount,
     }
 
@@ -138,6 +141,7 @@ export async function POST(request: NextRequest) {
         loomUrl: null,
         videoIds: [],
         loomUrls: [],
+        pdfFileNames: [file.name],
         itemCount: tasks.length,
         payload: responseData,
       })
