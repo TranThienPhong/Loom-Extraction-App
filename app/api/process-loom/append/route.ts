@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { downloadLoomVideo, downloadLoomSubtitles, cleanupVideo } from '@/lib/videoDownloader'
 import { extractFrame, secondsToTimestamp, validateVideoFile } from '@/lib/frameExtractor'
 import { parseSubtitleFile, extractLoomVideoId, generateLoomUrlWithTimestamp } from '@/lib/transcriptParser'
-import { analyzeTranscriptWithAI } from '@/lib/aiProviders'
+import { analyzeTranscriptWithAI, generateVideoSummary } from '@/lib/aiProviders'
+import { withExistingTasksContext } from '@/lib/appendContext'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import { getExtractionResult, updateExtractionResult } from '@/lib/resultsDb'
 import * as path from 'path'
@@ -45,6 +46,13 @@ export async function POST(request: NextRequest) {
     }
     if (existing.mode !== 'task') {
       return NextResponse.json({ error: 'Append is only supported for task-mode extractions' }, { status: 400 })
+    }
+    // Same-source rule: a PDF session can only grow with more PDFs.
+    if (existing.source === 'pdf') {
+      return NextResponse.json(
+        { error: 'This session was created from a PDF — add another PDF instead of a Loom video.' },
+        { status: 400 },
+      )
     }
 
     const existingPayload = existing.payload || {}
@@ -106,8 +114,11 @@ export async function POST(request: NextRequest) {
     // it tags returned tasks with video_index = newVideoIndex via the multi-video
     // prompt. Cheaper than re-analyzing every existing video and the existing
     // tasks stay untouched.
-    console.log(`[append] AI-analyzing new transcript...`)
-    const newTasks = await analyzeTranscriptWithAI(newEntries, dbContextString)
+    // Tell the AI which tasks the session already has so it only returns the
+    // NEW work this video introduces (incremental append — see appendContext).
+    const analysisContext = withExistingTasksContext(dbContextString, existingTasks)
+    console.log(`[append] AI-analyzing new transcript (${existingTasks.length} existing tasks as anti-dup context)...`)
+    const newTasks = await analyzeTranscriptWithAI(newEntries, analysisContext)
     console.log(`[append] AI identified ${newTasks.length} new task(s)`)
 
     // Frame extraction for the new tasks against the new video file.
@@ -182,6 +193,25 @@ export async function POST(request: NextRequest) {
       ...newEntries.map((e: any) => ({ t: e.timestamp_label, s: e.text, v: newVideoIndex })),
     ]
 
+    // Regenerate the summary over the FULL combined transcript so the document
+    // reads as one unified knowledge base (the whole point of appending) instead
+    // of a narrative that still only describes the first video. Non-fatal: fall
+    // back to the prior summary on failure, mirroring the create route.
+    let mergedSummary: string = existingPayload.summary || existing.summary || ''
+    try {
+      const regenerated = await generateVideoSummary(
+        mergedTranscript.map((l: any) => ({
+          timestamp_seconds: 0,
+          timestamp_label: l.t,
+          text: l.s,
+          video_index: l.v || 1,
+        })),
+      )
+      if (regenerated && regenerated.trim()) mergedSummary = regenerated.trim()
+    } catch (summaryErr: any) {
+      console.warn('[append] combined summary regeneration failed (non-fatal):', summaryErr?.message || summaryErr)
+    }
+
     const mergedPayload = {
       success: true,
       // Keep legacy singular fields aligned with the first video for back-compat.
@@ -190,7 +220,7 @@ export async function POST(request: NextRequest) {
       videoIds: mergedVideoIds,
       loomUrls: mergedLoomUrls,
       videoCount: mergedLoomUrls.length,
-      summary: existingPayload.summary || '',
+      summary: mergedSummary,
       tasks: mergedTasks,
       totalTasks: mergedTasks.length,
       transcript: mergedTranscript,
@@ -201,7 +231,7 @@ export async function POST(request: NextRequest) {
       loomUrls: mergedLoomUrls,
       videoIds: mergedVideoIds,
       itemCount: mergedTasks.length,
-      summary: existingPayload.summary || existing.summary,
+      summary: mergedSummary,
       title: existing.title,
       payload: mergedPayload,
     })
