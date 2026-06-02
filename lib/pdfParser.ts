@@ -15,6 +15,7 @@
  */
 
 import { PDFDocument, PDFRawStream, PDFName, PDFDict, PDFArray } from 'pdf-lib'
+import { encodePngDataUrl } from './pngEncode'
 // Deep imports — pdf-lib's public API doesn't expose individual filter streams.
 // We chain them manually and stop at DCT/JPX/JBIG2/CCITT so the bytes we keep
 // are a real image file (which pdf-lib's own decoder would throw on).
@@ -45,6 +46,51 @@ export interface PdfParseResult {
   pageCount: number
   /** Sanity-check counts. */
   stats: { textBlocks: number; images: number; loomUrls: number }
+}
+
+/**
+ * Safety net for the AI step: the model returns each task's `source_block_index`,
+ * and we attach that block's images to the task. But the model occasionally
+ * reports a slightly wrong index or merges blocks, which would orphan a block's
+ * images. This re-homes any images on a block that no task claimed onto the
+ * nearest PRECEDING task (the task the image follows — matching the
+ * Task → [image] layout), so no extracted screenshot is silently lost.
+ *
+ * Mutates `tasks` in place. Each task must have `source_block_index` and may
+ * have a `screenshots` array (created if missing).
+ */
+export function attachUnclaimedBlockImages(
+  tasks: Array<{ source_block_index?: number; screenshots?: any[]; image_base64?: string; image_url?: string }>,
+  blocks: PdfBlock[],
+): void {
+  if (tasks.length === 0) return
+  const claimed = new Set(tasks.map(t => t.source_block_index))
+  const byIndexAsc = [...tasks].sort((a, b) => (a.source_block_index ?? 0) - (b.source_block_index ?? 0))
+
+  for (const b of blocks) {
+    if (b.images.length === 0 || claimed.has(b.index)) continue
+    // Nearest task whose block is at/just before this one (the task it follows);
+    // fall back to the very first task if the image precedes every task.
+    let target: typeof byIndexAsc[number] | null = null
+    for (const t of byIndexAsc) {
+      if ((t.source_block_index ?? -1) <= b.index) target = t
+      else break
+    }
+    if (!target) target = byIndexAsc[0]
+    if (!target) continue
+    target.screenshots = target.screenshots || []
+    const start = target.screenshots.length
+    b.images.forEach((dataUrl, i) => target!.screenshots!.push({
+      timestamp_seconds: 0,
+      timestamp_label: `Image ${start + i + 1}`,
+      image_url: '',
+      image_base64: dataUrl,
+    }))
+    if (!target.image_base64 && target.screenshots[0]) {
+      target.image_base64 = target.screenshots[0].image_base64
+      target.image_url = target.image_url || ''
+    }
+  }
 }
 
 const TERMINAL_IMAGE_FILTERS = new Set([
@@ -80,6 +126,68 @@ function decodeImageStream(rawStream: any): { bytes: Uint8Array; terminalFilter:
   return { bytes, terminalFilter }
 }
 
+/**
+ * Resolve an image's colorspace to a renderable channel count (1 = gray, 3 = RGB),
+ * or null for ones we don't re-encode (CMYK, Indexed, unknown). Handles the plain
+ * device/cal names AND the common `[/ICCBased <stream>]` array form (e.g. macOS
+ * screenshots), where the wrapped ICC stream's `/N` entry gives the component
+ * count (1/3/4).
+ */
+function colorSpaceChannels(dict: PDFDict): 1 | 3 | null {
+  const cs = dict.lookup(PDFName.of('ColorSpace'))
+  if (!cs) return null
+
+  // Array colorspace — we only re-encode ICCBased (resolve N from the profile).
+  if (cs instanceof PDFArray) {
+    const family = cs.lookup(0)?.toString()
+    if (family === '/ICCBased') {
+      const profile = cs.lookup(1)
+      const n = profile && (profile as any).dict
+        ? Number((profile as any).dict.lookup(PDFName.of('N'))?.toString())
+        : NaN
+      if (n === 1) return 1
+      if (n === 3) return 3
+    }
+    return null // Indexed / CMYK ICC / Separation / etc.
+  }
+
+  const name = cs.toString()
+  if (name === '/DeviceRGB' || name === '/RGB' || name === '/CalRGB') return 3
+  if (name === '/DeviceGray' || name === '/G' || name === '/CalGray') return 1
+  return null
+}
+
+/**
+ * Re-encode RAW (already filter-decoded) image samples into a PNG data URL.
+ * Handles the common screenshot case — 8-bit DeviceGray or DeviceRGB — which is
+ * how non-JPEG images land here once FlateDecode has run. Returns null for
+ * colorspaces/bit-depths we can't safely wrap (CMYK, Indexed, non-8-bit), which
+ * the caller logs and skips. Soft-mask (alpha) is ignored — screenshots are
+ * effectively opaque, so the RGB/Gray pixels render correctly.
+ */
+function rawSamplesToPngDataUrl(dict: PDFDict, bytes: Uint8Array): string | null {
+  const num = (k: string): number | null => {
+    const v = dict.lookup(PDFName.of(k))
+    if (!v) return null
+    const n = Number(v.toString())
+    return Number.isFinite(n) ? n : null
+  }
+  const width = num('Width')
+  const height = num('Height')
+  const bpc = num('BitsPerComponent')
+  if (!width || !height || bpc !== 8) return null
+
+  const channels = colorSpaceChannels(dict)
+  if (!channels) return null // CMYK / Indexed / unknown colorspaces — skip.
+
+  if (bytes.length < width * height * channels) return null
+  try {
+    return encodePngDataUrl(width, height, channels, bytes)
+  } catch {
+    return null
+  }
+}
+
 /** Mime type for the image bytes based on which terminal filter produced them. */
 function imageMimeFor(terminalFilter: string | null, bytes: Uint8Array): string {
   if (terminalFilter === '/DCTDecode' || terminalFilter === '/DCT') return 'image/jpeg'
@@ -105,14 +213,26 @@ function extractImageBytesByPage(pdfDoc: PDFDocument): Array<Array<{ dataUrl: st
       if (subtype !== '/Image') continue
       try {
         const { bytes, terminalFilter } = decodeImageStream(stream)
-        // Skip JPX/JBIG2/CCITT (we can't usually display these as-is in browsers).
-        // Most "screenshot in a PDF" cases are DCTDecode (JPEG).
-        if (terminalFilter && !['/DCTDecode', '/DCT', '/JPXDecode', '/JPX'].includes(terminalFilter)) continue
-        const mime = imageMimeFor(terminalFilter, bytes)
-        if (mime === 'application/octet-stream') continue
-        // Convert Uint8Array → base64 in Node.
-        const b64 = Buffer.from(bytes).toString('base64')
-        pageImages.push({ dataUrl: `data:${mime};base64,${b64}` })
+        if (['/DCTDecode', '/DCT', '/JPXDecode', '/JPX'].includes(terminalFilter || '')) {
+          // The kept bytes ARE a valid image file (JPEG/JP2) — use directly.
+          const mime = imageMimeFor(terminalFilter, bytes)
+          if (mime === 'application/octet-stream') {
+            console.warn(`[pdfParser] Skipping image (unrecognized bytes after ${terminalFilter})`)
+            continue
+          }
+          const b64 = Buffer.from(bytes).toString('base64')
+          pageImages.push({ dataUrl: `data:${mime};base64,${b64}` })
+        } else if (terminalFilter) {
+          // JBIG2 / CCITT etc. — bitmap formats we can't show in a browser as-is.
+          console.warn(`[pdfParser] Skipping image with unsupported filter ${terminalFilter}`)
+        } else {
+          // No terminal image filter: `bytes` are RAW samples (e.g. a PNG-style
+          // FlateDecode screenshot). Re-encode to a real PNG when the colorspace
+          // is supported; otherwise warn + skip (no silent loss).
+          const pngUrl = rawSamplesToPngDataUrl(stream.dict, bytes)
+          if (pngUrl) pageImages.push({ dataUrl: pngUrl })
+          else console.warn('[pdfParser] Skipping image (unsupported raw colorspace/bit-depth)')
+        }
       } catch (err) {
         // Skip un-decodable images rather than failing the whole upload.
         console.warn(`[pdfParser] Skipping image on page (decode failed):`, (err as Error).message)
@@ -130,7 +250,8 @@ function isLoomUrl(u: string): boolean {
 
 interface OrderedItem {
   page: number      // 1-based
-  y: number         // PDF y — bigger = higher on page
+  y: number         // PDF y of the TOP edge — bigger = higher on page
+  yBottom: number   // PDF y of the BOTTOM edge (paragraph last line / image base)
   kind: 'paragraph' | 'image' | 'loom'
   text?: string     // for paragraph
   imageIndex?: number  // index into pageImagesByPage[page-1]
@@ -141,7 +262,7 @@ interface OrderedItem {
  * Group same-line text items into lines, then lines separated by big y-gaps
  * into paragraphs. Returns paragraphs in top-to-bottom order with their top y.
  */
-function paragraphsFromTextItems(items: any[]): Array<{ y: number; text: string }> {
+function paragraphsFromTextItems(items: any[]): Array<{ y: number; yBottom: number; text: string }> {
   if (items.length === 0) return []
   // Each item has transform [a, b, c, d, e, f] where (e, f) is the position.
   // We use f (y) and the item's str. Items without a transform (rare) get y=0.
@@ -183,12 +304,21 @@ function paragraphsFromTextItems(items: any[]): Array<{ y: number; text: string 
   const medianDelta = deltas[Math.floor(deltas.length / 2)] || 12
   const paragraphBreak = medianDelta * 1.8  // a gap > ~2x the line height starts a new paragraph
 
+  // "Screenshot — Page N …" caption lines sit very close to the task beneath
+  // them, so plain y-gap grouping fuses the caption with the real task. Force a
+  // caption line to be its own paragraph (and prevent the next line from merging
+  // back into it) so the caption can be skipped as an image-attach target while
+  // the task below stays a clean, separate block.
+  const isCaptionLine = (t: string) => /^screenshot\b/i.test(t.trim())
+
   // Track the paragraph's TOP y (for sorting) AND the y of its most-recent line
   // (for gap detection — comparing to TOP y wrongly fragments long paragraphs).
   const paragraphs: Array<{ y: number; lastY: number; lines: string[] }> = []
   for (const line of flatLines) {
     const last = paragraphs[paragraphs.length - 1]
-    if (last) {
+    const lineIsCaption = isCaptionLine(line.text)
+    const lastIsCaption = last ? isCaptionLine(last.lines[0]) : false
+    if (last && !lineIsCaption && !lastIsCaption) {
       const gap = last.lastY - line.y
       // Continuation if the gap is small. A line ending in sentence-final
       // punctuation can still continue if the next line is visually close —
@@ -203,14 +333,16 @@ function paragraphsFromTextItems(items: any[]): Array<{ y: number; text: string 
     paragraphs.push({ y: line.y, lastY: line.y, lines: [line.text] })
   }
 
-  return paragraphs.map(p => ({ y: p.y, text: p.lines.join('\n') }))
+  // y = top of paragraph (for reading-order sort); yBottom = its last line
+  // (for measuring the gap to an image sitting just below it).
+  return paragraphs.map(p => ({ y: p.y, yBottom: p.lastY, text: p.lines.join('\n') }))
 }
 
 /**
  * For each paintImageXObject op, recover the page-Y of the painted image by
  * walking the operator stream while maintaining the current transform matrix.
  */
-async function imagePaintYs(page: any, pdfjs: any): Promise<number[]> {
+async function imagePaintYs(page: any, pdfjs: any): Promise<Array<{ y: number; h: number }>> {
   const ops = await page.getOperatorList()
   const OPS = pdfjs.OPS
   const paintImg = OPS.paintImageXObject
@@ -230,7 +362,7 @@ async function imagePaintYs(page: any, pdfjs: any): Promise<number[]> {
     m1[1] * m2[4] + m1[3] * m2[5] + m1[5],
   ]
 
-  const ys: number[] = []
+  const ys: Array<{ y: number; h: number }> = []
   for (let i = 0; i < ops.fnArray.length; i++) {
     const fn = ops.fnArray[i]
     const args = ops.argsArray[i]
@@ -243,11 +375,11 @@ async function imagePaintYs(page: any, pdfjs: any): Promise<number[]> {
       const m: Mat = [args[0], args[1], args[2], args[3], args[4], args[5]]
       stack[stack.length - 1] = mul(top, m)
     } else if (fn === paintImg || fn === paintInline) {
-      // The image is painted at the CTM origin. In PDF coords, this is the
-      // BOTTOM-LEFT of the image (positive Y = up). Use that f-value as the
-      // image's reading-order y.
+      // The image is painted into a unit square scaled by the CTM. f (m[5]) is
+      // the BOTTOM edge in PDF coords (positive Y = up); the d component (m[3])
+      // is the painted height, so bottom + height = the TOP edge.
       const top = stack[stack.length - 1]
-      ys.push(top[5])
+      ys.push({ y: top[5], h: Math.abs(top[3]) })
     }
   }
   return ys
@@ -260,24 +392,26 @@ async function imagePaintYs(page: any, pdfjs: any): Promise<number[]> {
  */
 function pairImagesWithPositions(
   pageImages: Array<{ dataUrl: string }>,
-  paintYs: number[],
+  paintYs: Array<{ y: number; h: number }>,
   pageNumber: number,
 ): OrderedItem[] {
   if (pageImages.length === 0) return []
   if (paintYs.length === pageImages.length) {
     return pageImages.map((img, i) => ({
       page: pageNumber,
-      y: paintYs[i],
+      y: paintYs[i].y + paintYs[i].h,  // top edge
+      yBottom: paintYs[i].y,           // base edge
       kind: 'image' as const,
       imageIndex: i,
     }))
   }
-  // Mismatch: assume painted-in-declaration-order. Attach without a meaningful y
-  // (use a small y so they end up at the bottom of the page and attach to the
-  // last block above). This is a safe degradation, not a failure.
+  // Mismatch: we can't position these reliably. Mark with y = -1 so the nearest
+  // -block assignment treats them as position-unknown (attached as a page-level
+  // fallback) rather than guessing a wrong location.
   return pageImages.map((img, i) => ({
     page: pageNumber,
-    y: 0,
+    y: -1,
+    yBottom: -1,
     kind: 'image' as const,
     imageIndex: i,
   }))
@@ -340,7 +474,7 @@ export async function parsePdfToBlocks(buffer: Buffer | Uint8Array): Promise<Pdf
     const paragraphs = paragraphsFromTextItems(tc.items)
     for (const para of paragraphs) {
       if (isPageNoise(para.text)) continue
-      stream.push({ page: p, y: para.y, kind: 'paragraph', text: para.text })
+      stream.push({ page: p, y: para.y, yBottom: para.yBottom, kind: 'paragraph', text: para.text })
     }
 
     // URL annotations.
@@ -349,9 +483,10 @@ export async function parsePdfToBlocks(buffer: Buffer | Uint8Array): Promise<Pdf
       if (a.subtype !== 'Link') continue
       const url = (a.url || a.unsafeUrl || '').trim()
       if (!isLoomUrl(url)) continue
-      // rect = [x1, y1, x2, y2] — y2 is the top, use that.
+      // rect = [x1, y1, x2, y2] — y2 is the top, y1 the bottom.
       const y = (a.rect && a.rect[3]) ?? 0
-      stream.push({ page: p, y, kind: 'loom', loomUrl: url })
+      const yBottom = (a.rect && a.rect[1]) ?? y
+      stream.push({ page: p, y, yBottom, kind: 'loom', loomUrl: url })
     }
 
     // Images.
@@ -362,63 +497,73 @@ export async function parsePdfToBlocks(buffer: Buffer | Uint8Array): Promise<Pdf
     }
   }
 
-  // Sort: page asc, y desc (top-first within page).
+  // Sort: page asc, y desc (top-first within page) = linear reading order.
+  // Images use their TOP edge (set in pairImagesWithPositions) so each one sorts
+  // immediately after the text block it follows.
   stream.sort((a, b) => (a.page - b.page) || (b.y - a.y))
 
-  // Walk the stream, attaching images/loom URLs to the most recent paragraph block.
+  // The user's PDFs are laid out as: TASK text → [that task's image(s)] →
+  // [its Loom link] → next TASK. So an image/Loom attaches to the most recent
+  // REAL task block that PRECEDES it in reading order. We keep `lastRealBlock`
+  // across page boundaries, so an image at the top of a page correctly attaches
+  // to the task whose text ended on the previous page (e.g. the punch-out modal
+  // screenshot that flows onto the next page still belongs to the Punch task).
+  const isCaptionText = (text: string) => /^screenshot\b/i.test(text.trim())
+
   const blocks: PdfBlock[] = []
-  let currentImages: string[] = []
-  let currentLoom: string[] = []
-  let last: PdfBlock | null = null
-  const flushTo = (b: PdfBlock | null) => {
-    if (!b) { currentImages = []; currentLoom = []; return }
-    if (currentImages.length) b.images.push(...currentImages)
-    if (currentLoom.length) b.loomUrls.push(...currentLoom)
-    currentImages = []
-    currentLoom = []
-  }
+  let lastRealBlock: PdfBlock | null = null
+  // Images/Loom that appear before ANY real task block (rare) — held and given
+  // to the first real block so nothing is silently dropped.
+  const pendingImages: string[] = []
+  const pendingLoom: string[] = []
+  const addLoom = (b: PdfBlock, url: string) => { if (!b.loomUrls.includes(url)) b.loomUrls.push(url) }
 
   let nextIndex = 1
   for (const item of stream) {
-    if (item.kind === 'paragraph') {
-      // First, attach any pending image/url to the PREVIOUS block (the rule:
-      // an image/url "follows" the most recent text). Then start a new block.
-      flushTo(last)
-      const rawText = (item.text || '').trim()
-      if (!rawText) continue
+    if (item.kind === 'image') {
+      const dataUrl = imageBytesByPage[item.page - 1]?.[item.imageIndex!]?.dataUrl
+      if (!dataUrl) continue
+      if (lastRealBlock) lastRealBlock.images.push(dataUrl)
+      else pendingImages.push(dataUrl)
+      continue
+    }
+    if (item.kind === 'loom') {
+      if (!item.loomUrl) continue
+      if (lastRealBlock) addLoom(lastRealBlock, item.loomUrl)
+      else pendingLoom.push(item.loomUrl)
+      continue
+    }
 
-      // Loom URLs pasted as plain text into the paragraph also attach to that
-      // block. We strip them from the body text so the AI doesn't get noise.
-      const textLoomUrls = extractLoomUrlsFromText(rawText)
-      const cleanText = rawText.replace(LOOM_URL_REGEX, '').replace(/\s{2,}/g, ' ').trim()
-      // If after URL stripping nothing meaningful remains, treat as URL-only —
-      // attach the URLs to the previous block rather than create an empty one.
-      if (!cleanText) {
-        if (last) last.loomUrls.push(...textLoomUrls)
-        continue
-      }
+    // paragraph
+    const rawText = (item.text || '').trim()
+    if (!rawText) continue
+    const textLoomUrls = extractLoomUrlsFromText(rawText)
+    const cleanText = rawText.replace(LOOM_URL_REGEX, '').replace(/\s{2,}/g, ' ').trim()
+    if (!cleanText) {
+      // URL-only paragraph — its Loom link belongs to the task above it.
+      if (lastRealBlock) textLoomUrls.forEach(u => addLoom(lastRealBlock!, u))
+      else pendingLoom.push(...textLoomUrls)
+      continue
+    }
 
-      const firstLine = cleanText.split('\n')[0].trim()
-      const block: PdfBlock = {
-        index: nextIndex++,
-        page: item.page,
-        firstLine,
-        text: cleanText,
-        images: [],
-        loomUrls: textLoomUrls.slice(),  // URLs inline with the paragraph belong here
-      }
-      blocks.push(block)
-      last = block
-    } else if (item.kind === 'image') {
-      const pageImages = imageBytesByPage[item.page - 1]
-      const img = pageImages?.[item.imageIndex!]
-      if (img?.dataUrl) currentImages.push(img.dataUrl)
-    } else if (item.kind === 'loom') {
-      if (item.loomUrl) currentLoom.push(item.loomUrl)
+    const block: PdfBlock = {
+      index: nextIndex++,
+      page: item.page,
+      firstLine: cleanText.split('\n')[0].trim(),
+      text: cleanText,
+      images: [],
+      loomUrls: textLoomUrls.slice(),  // URLs inline with the paragraph belong here
+    }
+    blocks.push(block)
+
+    // Captions ("Screenshot — Page N …") are kept for AI context but never become
+    // the attach target, so an image lands on the real task, not a caption.
+    if (!isCaptionText(cleanText)) {
+      if (pendingImages.length) { block.images.push(...pendingImages); pendingImages.length = 0 }
+      if (pendingLoom.length) { pendingLoom.forEach(u => addLoom(block, u)); pendingLoom.length = 0 }
+      lastRealBlock = block
     }
   }
-  // Flush trailing attachments to the last block.
-  flushTo(last)
 
   const totalImages = blocks.reduce((a, b) => a + b.images.length, 0)
   const totalLoom = blocks.reduce((a, b) => a + b.loomUrls.length, 0)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parsePdfToBlocks, PdfBlock } from '@/lib/pdfParser'
+import { parsePdfToBlocks, PdfBlock, attachUnclaimedBlockImages } from '@/lib/pdfParser'
 import { analyzePdfBlocksWithAI, generatePdfSummary, PdfBlockForAI } from '@/lib/aiProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import { saveExtractionResult } from '@/lib/resultsDb'
@@ -70,9 +70,15 @@ export async function POST(request: NextRequest) {
     const blockByIndex = new Map<number, PdfBlock>()
     for (const b of parsed.blocks) blockByIndex.set(b.index, b)
 
+    // A block's images attach to only the FIRST task derived from it, so one
+    // screenshot isn't duplicated across multiple unrelated tasks (most-relevant
+    // only). Track which blocks have already donated their images.
+    const blockImagesUsed = new Set<number>()
     const tasks = aiTasks.map((t, i) => {
       const block = blockByIndex.get(t.source_block_index)
-      const screenshots = (block?.images || []).map((dataUrl, si) => ({
+      const takeImages = !!block?.images.length && !blockImagesUsed.has(t.source_block_index)
+      if (takeImages) blockImagesUsed.add(t.source_block_index)
+      const screenshots = (takeImages ? block!.images : []).map((dataUrl, si) => ({
         // PDF has no video timestamp — use zero/empty so the results page can
         // distinguish PDF screenshots from video screenshots if it wants to.
         timestamp_seconds: 0,
@@ -81,12 +87,17 @@ export async function POST(request: NextRequest) {
         image_base64: dataUrl,
       }))
       const primary = screenshots[0]
-      // First attached Loom URL becomes the "Watch in Loom" link; the rest are
-      // dropped (the schema only carries one). Could expand later if needed.
+      // First attached Loom URL becomes the "Watch in Loom"/Explanation link.
       const loomUrl = block?.loomUrls?.[0] || ''
+      // Per spec: also append the Loom link to the bottom of the description so
+      // it travels with the task text (PDF export, copy/paste, etc.).
+      const taskDescription = loomUrl
+        ? `${t.task_description}\n\nLoom: ${loomUrl}`
+        : t.task_description
 
       return {
         ...t,
+        task_description: taskDescription,
         // Stable identity so the results-page React keys behave.
         _id: `pdf_${i}`,
         // Synthetic timestamp fields for shape compatibility with the Loom flow.
@@ -104,6 +115,9 @@ export async function POST(request: NextRequest) {
         source_block_page: block?.page ?? null,
       }
     })
+
+    // Safety net: re-home images from any block the AI didn't map to a task.
+    attachUnclaimedBlockImages(tasks, parsed.blocks)
 
     const responseData = {
       success: true,

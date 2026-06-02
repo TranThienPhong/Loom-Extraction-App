@@ -418,9 +418,9 @@ ${blocksText}
 Instructions:
 1. Look for blocks that describe something to fix, build, change, or improve. Common patterns: "TEAM:", "TASKS:", "BUG:", "MY DAY:", "ADMIN PAGE:", "PROJECTS:", "GLOBAL:" — these section prefixes usually mark a task. But also accept tasks without prefixes if the block clearly describes work.
 2. For each real task, create:
-   - A clear, actionable task_name (5-10 words). Do NOT start it with a number, ordinal, or the section prefix.
+   - A clear, actionable task_name (5-10 words). **PREFIX it with the page/section header it belongs under, formatted as "Header: Task name".** The header is the page or section the task sits under — either a standalone page header (e.g. "Account Page", "Job Roles", "Projects Page", "Admin Page") or the block's own leading section tag (e.g. "TEAM:", "TASKS:", "ADMIN PAGE:", "BUG:", "GLOBAL:", "MY DAY:"). Examples: "Account Page: Enable editing from job roles", "Admin Page: Add returned-tasks log". Do NOT start with a number or ordinal. If there is genuinely no section/page header for a task, omit the prefix.
    - A concise task_description (2-3 sentences, ~50 words) summarizing what needs doing.
-3. If a section prefix like "TEAM:" or "BUG:" appears, use it as a hint for the area or task_type — e.g., "BUG:" implies a fix task; "GLOBAL:" implies app-wide scope.
+3. The section prefix/header is ALSO a hint for the area or task_type — e.g., "BUG:" implies a fix task; "GLOBAL:" implies app-wide scope; a page name like "Admin Page" implies the area.
 4. For project, client, area, and assignee:
    - First try to extract them from the block text.
    - If not present in the text, pick the BEST matching option from the Reference Database above (if provided).
@@ -451,7 +451,7 @@ Return ONLY a JSON array with no additional text, explanation, or markdown forma
 Example:
 [
   {
-    "task_name": "Build returned-tasks log on admin page",
+    "task_name": "Admin Page: Build returned-tasks log",
     "task_description": "Add a section on the admin page that lists tasks returned by team members so admins/executives can identify managers with repeat returns.",
     "priority": 3.0,
     "complexity": "MOD",

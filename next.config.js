@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  serverExternalPackages: ['pg'],
+  // Keep these out of the server bundle so they load from node_modules at
+  // runtime. pdf-lib does deep CommonJS requires into its own internals
+  // (cjs/core/streams/*) and pdfjs-dist loads .mjs worker files — bundling
+  // breaks both, which silently produced ZERO extracted PDF images on Railway
+  // (works locally because dev/tsx read straight from node_modules).
+  serverExternalPackages: ['pg', 'pdf-lib', 'pdfjs-dist'],
   images: {
     remotePatterns: [
       {
