@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parsePdfToBlocks, PdfBlock } from '@/lib/pdfParser'
+import { parsePdfToBlocks, PdfBlock, attachUnclaimedBlockImages } from '@/lib/pdfParser'
 import { analyzePdfBlocksWithAI, generatePdfSummary, PdfBlockForAI } from '@/lib/aiProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import { getExtractionResult, updateExtractionResult } from '@/lib/resultsDb'
@@ -96,9 +96,13 @@ export async function POST(request: NextRequest) {
     const blockByIndex = new Map<number, PdfBlock>()
     for (const b of parsed.blocks) blockByIndex.set(b.index, b)
 
+    const blockImagesUsed = new Set<number>()
     const newTasks = aiTasks.map((t, i) => {
       const block = blockByIndex.get(t.source_block_index)
-      const screenshots = (block?.images || []).map((dataUrl, si) => ({
+      // Images attach to only the first task derived from a block (most-relevant).
+      const takeImages = !!block?.images.length && !blockImagesUsed.has(t.source_block_index)
+      if (takeImages) blockImagesUsed.add(t.source_block_index)
+      const screenshots = (takeImages ? block!.images : []).map((dataUrl, si) => ({
         timestamp_seconds: 0,
         timestamp_label: `Image ${si + 1}`,
         image_url: '',
@@ -106,8 +110,13 @@ export async function POST(request: NextRequest) {
       }))
       const primary = screenshots[0]
       const loomUrl = block?.loomUrls?.[0] || ''
+      // Append the Loom link to the description (spec), keep it as the per-task link.
+      const taskDescription = loomUrl
+        ? `${t.task_description}\n\nLoom: ${loomUrl}`
+        : t.task_description
       return {
         ...t,
+        task_description: taskDescription,
         // Namespaced so it can't collide with the existing pdf_<n> ids.
         _id: `pdf_p${partIndex}_${i}`,
         timestamp_seconds: 0,
@@ -125,6 +134,8 @@ export async function POST(request: NextRequest) {
         source_block_page: block?.page ?? null,
       }
     })
+    // Safety net: re-home images from any block the AI didn't map to a task.
+    attachUnclaimedBlockImages(newTasks, parsed.blocks)
     console.log(`[pdf-append] AI identified ${newTasks.length} new task(s) for part ${partIndex}`)
 
     // Merge into the existing payload.
