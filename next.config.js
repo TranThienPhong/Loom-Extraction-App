@@ -5,7 +5,9 @@ const nextConfig = {
   // (cjs/core/streams/*) and pdfjs-dist loads .mjs worker files — bundling
   // breaks both, which silently produced ZERO extracted PDF images on Railway
   // (works locally because dev/tsx read straight from node_modules).
-  serverExternalPackages: ['pg', 'pdf-lib', 'pdfjs-dist'],
+  // 'sharp' is a native module (used to downscale extracted PDF screenshots);
+  // keep it external so its prebuilt binary loads from node_modules at runtime.
+  serverExternalPackages: ['pg', 'pdf-lib', 'pdfjs-dist', 'sharp'],
   images: {
     remotePatterns: [
       {

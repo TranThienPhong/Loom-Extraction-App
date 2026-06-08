@@ -242,14 +242,49 @@ function imageMimeFor(terminalFilter: string | null, bytes: Uint8Array): string 
   return 'application/octet-stream'
 }
 
+/**
+ * Shrink an oversized extracted screenshot. A 20-page notes PDF can carry 26
+ * full-resolution screenshots (~1.6 MB each → ~22 MB of base64 once embedded),
+ * which bloats the API response, the JSONB row, and the browser's storage quota.
+ * We only need display/export resolution, so downscale to ≤1400px-wide JPEG.
+ *
+ * SAFETY: best-effort only. `sharp` is a native module — if it isn't available
+ * at runtime, or decoding fails, we return the ORIGINAL data URL unchanged so
+ * image extraction never regresses. Small images are passed through untouched.
+ */
+async function downscaleDataUrl(dataUrl: string): Promise<string> {
+  const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)
+  if (!m) return dataUrl
+  const mime = m[1]
+  // sharp handles JPEG/PNG; leave JP2/other formats as-is.
+  if (mime !== 'image/jpeg' && mime !== 'image/png') return dataUrl
+  const buf = Buffer.from(m[2], 'base64')
+  // Already lightweight — not worth a re-encode.
+  if (buf.length <= 350_000) return dataUrl
+  try {
+    const sharp = (await import('sharp')).default
+    const out = await sharp(buf)
+      .rotate() // honor any EXIF orientation before stripping metadata
+      .resize({ width: 1400, withoutEnlargement: true })
+      .jpeg({ quality: 78 })
+      .toBuffer()
+    // Only adopt the re-encode if it actually saved space.
+    if (out.length < buf.length) return `data:image/jpeg;base64,${out.toString('base64')}`
+    return dataUrl
+  } catch (e) {
+    console.warn('[pdfParser] image downscale failed, using original:', (e as Error).message)
+    return dataUrl
+  }
+}
+
 /** Extract every image XObject from every page, in page → declaration order. */
-function extractImageBytesByPage(pdfDoc: PDFDocument): Array<Array<{ dataUrl: string }>> {
+async function extractImageBytesByPage(pdfDoc: PDFDocument): Promise<Array<Array<{ dataUrl: string }>>> {
   const out: Array<Array<{ dataUrl: string }>> = []
-  pdfDoc.getPages().forEach((page) => {
+  for (const page of pdfDoc.getPages()) {
     const pageImages: Array<{ dataUrl: string }> = []
     const resources = page.node.Resources()
     const xobjectsRaw = resources?.lookup(PDFName.of('XObject'))
-    if (!(xobjectsRaw instanceof PDFDict)) { out.push(pageImages); return }
+    if (!(xobjectsRaw instanceof PDFDict)) { out.push(pageImages); continue }
     for (const key of xobjectsRaw.keys()) {
       const stream = xobjectsRaw.lookup(key)
       if (!(stream instanceof PDFRawStream)) continue
@@ -282,8 +317,13 @@ function extractImageBytesByPage(pdfDoc: PDFDocument): Array<Array<{ dataUrl: st
         console.warn(`[pdfParser] Skipping image on page (decode failed):`, (err as Error).message)
       }
     }
+    // Downscale oversized screenshots (best-effort) before they fan out into the
+    // response / DB / browser storage.
+    for (let i = 0; i < pageImages.length; i++) {
+      pageImages[i].dataUrl = await downscaleDataUrl(pageImages[i].dataUrl)
+    }
     out.push(pageImages)
-  })
+  }
   return out
 }
 
@@ -490,7 +530,7 @@ function extractLoomUrlsFromText(text: string): string[] {
 export async function parsePdfToBlocks(buffer: Buffer | Uint8Array): Promise<PdfParseResult> {
   // pdf-lib first — gives us image bytes per page.
   const pdfDoc = await PDFDocument.load(new Uint8Array(buffer))
-  const imageBytesByPage = extractImageBytesByPage(pdfDoc)
+  const imageBytesByPage = await extractImageBytesByPage(pdfDoc)
 
   // pdfjs second — gives us text positions, link annotations, image positions.
   // Side-effect import of the worker module registers it in pdfjs's internal
