@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parsePdfToBlocks, PdfBlock, attachUnclaimedBlockImages } from '@/lib/pdfParser'
+import { parsePdfToBlocks, PdfBlock, attachUnclaimedBlockImages, attachUnclaimedBlockLooms } from '@/lib/pdfParser'
 import { analyzePdfBlocksWithAI, generatePdfSummary, PdfBlockForAI } from '@/lib/aiProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import { getExtractionResult, updateExtractionResult } from '@/lib/resultsDb'
@@ -136,6 +136,8 @@ export async function POST(request: NextRequest) {
     })
     // Safety net: re-home images from any block the AI didn't map to a task.
     attachUnclaimedBlockImages(newTasks, parsed.blocks)
+    // Same for orphaned Loom links so they become the task's explanation video.
+    attachUnclaimedBlockLooms(newTasks, parsed.blocks)
     console.log(`[pdf-append] AI identified ${newTasks.length} new task(s) for part ${partIndex}`)
 
     // Merge into the existing payload.

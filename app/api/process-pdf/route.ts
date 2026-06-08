@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { parsePdfToBlocks, PdfBlock, attachUnclaimedBlockImages } from '@/lib/pdfParser'
+import { parsePdfToBlocks, PdfBlock, attachUnclaimedBlockImages, attachUnclaimedBlockLooms } from '@/lib/pdfParser'
 import { analyzePdfBlocksWithAI, generatePdfSummary, PdfBlockForAI } from '@/lib/aiProviders'
 import { getDBContext, formatDBContextForPrompt } from '@/lib/dbContext'
 import { saveExtractionResult } from '@/lib/resultsDb'
@@ -118,6 +118,9 @@ export async function POST(request: NextRequest) {
 
     // Safety net: re-home images from any block the AI didn't map to a task.
     attachUnclaimedBlockImages(tasks, parsed.blocks)
+    // Same for Loom links stranded on continuation blocks the AI skipped, so a
+    // real Loom URL in the PDF always becomes the explanation video for its task.
+    attachUnclaimedBlockLooms(tasks, parsed.blocks)
 
     const responseData = {
       success: true,

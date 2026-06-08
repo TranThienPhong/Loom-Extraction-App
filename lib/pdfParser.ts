@@ -93,6 +93,50 @@ export function attachUnclaimedBlockImages(
   }
 }
 
+/**
+ * Loom-link analogue of {@link attachUnclaimedBlockImages}. The AI maps each task
+ * to a `source_block_index`, and the route copies that block's first Loom URL onto
+ * the task. But a Loom link often sits on a CONTINUATION block — e.g. a "MY DAY:
+ * PRIORITY 1.4 …" task starts on page 12 and its "WATCH THIS LOOM: …" line lands
+ * on the page-13 block, which the AI may not turn into its own task. That orphans
+ * the link. This re-homes any Loom URL on an UNCLAIMED block onto the nearest
+ * PRECEDING task (the task the link follows), setting `loom_url` if empty and
+ * appending "\n\nLoom: <url>" to the description so the link travels with the task.
+ *
+ * Mutates `tasks` in place. Each task must have `source_block_index` and may have
+ * `loom_url` / `task_description`.
+ */
+export function attachUnclaimedBlockLooms(
+  tasks: Array<{ source_block_index?: number; loom_url?: string; task_description?: string }>,
+  blocks: PdfBlock[],
+): void {
+  if (tasks.length === 0) return
+  const claimed = new Set(tasks.map(t => t.source_block_index))
+  const byIndexAsc = [...tasks].sort((a, b) => (a.source_block_index ?? 0) - (b.source_block_index ?? 0))
+
+  for (const b of blocks) {
+    if (b.loomUrls.length === 0 || claimed.has(b.index)) continue
+    // Nearest task whose block is at/just before this one (the task it follows);
+    // fall back to the very first task if the link precedes every task.
+    let target: typeof byIndexAsc[number] | null = null
+    for (const t of byIndexAsc) {
+      if ((t.source_block_index ?? -1) <= b.index) target = t
+      else break
+    }
+    if (!target) target = byIndexAsc[0]
+    if (!target) continue
+    for (const url of b.loomUrls) {
+      if (!target.loom_url) target.loom_url = url
+      const already = (target.task_description || '').includes(url)
+      if (!already) {
+        target.task_description = target.task_description
+          ? `${target.task_description}\n\nLoom: ${url}`
+          : `Loom: ${url}`
+      }
+    }
+  }
+}
+
 const TERMINAL_IMAGE_FILTERS = new Set([
   '/DCTDecode', '/JPXDecode', '/JBIG2Decode', '/CCITTFaxDecode',
   '/DCT', '/JPX', '/CCF',

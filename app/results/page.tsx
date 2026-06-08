@@ -313,6 +313,17 @@ export default function Results() {
       const idx = (t.video_index || 1) - 1
       return videoIds[idx] || videoId
     }
+    // The explanation/"Watch" link for a task. For Loom sources we synthesize a
+    // timestamped deep-link into the source video. For PDF sources there is NO
+    // video to deep-link into — the only legitimate link is a real Loom URL that
+    // was embedded in the PDF (parsed into task.loom_url). NEVER synthesize a
+    // loom.com URL from the pdf_<id> storage key: that produced the bogus
+    // "loom.com/share/pdf_..._f3lz" links Mars flagged.
+    const explanationUrl = (t: Task): string =>
+      source === 'pdf'
+        ? (t.loom_url || '')
+        : generateLoomUrlWithTimestamp(videoIdForTask(t), t.timestamp_seconds)
+    const isPdf = source === 'pdf'
     const multiVideoPdf = videoCount > 1
     // Provenance label depends on whether the parts are Loom videos or PDFs.
     const partWordPdf = source === 'pdf' ? 'PDF' : 'VID'
@@ -347,8 +358,10 @@ export default function Results() {
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(110, 110, 120)
       doc.text(label, mL, pageH - 8)
-      doc.setTextColor(40, 80, 180)
-      doc.textWithLink(url, pageW - mR, pageH - 8, { url, align: 'right' })
+      if (url) {
+        doc.setTextColor(40, 80, 180)
+        doc.textWithLink(url, pageW - mR, pageH - 8, { url, align: 'right' })
+      }
     }
 
     // Fallback: read transcript directly from sessionStorage if state is empty
@@ -376,7 +389,7 @@ export default function Results() {
     doc.setFontSize(24)
     doc.setFont('helvetica', 'bold')
     doc.setTextColor(20, 30, 100)
-    doc.text('Loom Video', mL, y)
+    doc.text(isPdf ? 'PDF Document' : 'Loom Video', mL, y)
     y += 9
     doc.setFontSize(18)
     doc.setTextColor(60, 75, 160)
@@ -397,7 +410,7 @@ export default function Results() {
     for (let i = 0; i < tasks.length; i++) {
       if (y > pageH - 25) break
       const t = tasks[i]
-      const url = generateLoomUrlWithTimestamp(videoIdForTask(t), t.timestamp_seconds)
+      const url = explanationUrl(t)
       doc.setFontSize(9)
       doc.setFont('helvetica', 'bold')
       doc.setTextColor(20, 20, 60)
@@ -406,8 +419,16 @@ export default function Results() {
       doc.setTextColor(20, 20, 20)
       const nameLabel = doc.splitTextToSize(t.task_name, cW - 42)
       doc.text(nameLabel[0], mL + 10, y)
-      doc.setTextColor(40, 80, 180)
-      doc.textWithLink(t.timestamp_label, pageW - mR - doc.getTextWidth(t.timestamp_label), y, { url })
+      // Right-aligned link: Loom sources show the timestamp; PDF sources show a
+      // small "Loom ↗" marker ONLY when the PDF actually embedded a Loom link.
+      if (!isPdf) {
+        doc.setTextColor(40, 80, 180)
+        doc.textWithLink(t.timestamp_label, pageW - mR - doc.getTextWidth(t.timestamp_label), y, { url })
+      } else if (url) {
+        const marker = 'Loom ↗'
+        doc.setTextColor(40, 80, 180)
+        doc.textWithLink(marker, pageW - mR - doc.getTextWidth(marker), y, { url })
+      }
       y += 6
     }
 
@@ -427,7 +448,7 @@ export default function Results() {
       y = 12
 
       const taskVid = videoIdForTask(task)
-      const taskUrl = generateLoomUrlWithTimestamp(taskVid, task.timestamp_seconds)
+      const taskUrl = explanationUrl(task)
 
       // Header band
       doc.setFillColor(235, 238, 255)
@@ -447,23 +468,29 @@ export default function Results() {
       if (titleLines[1]) doc.text(titleLines[1], mL + 3, y + 19)
       y += 26
 
-      // Timestamp + Loom link
+      // Timestamp (Loom-only — PDF tasks have no video timestamp) + explanation link.
       doc.setFontSize(9)
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(60, 60, 80)
-      doc.text('Timestamp:', mL, y)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(20, 20, 20)
-      doc.text(task.timestamp_label, mL + 26, y)
-      y += 6
+      if (!isPdf) {
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(60, 60, 80)
+        doc.text('Timestamp:', mL, y)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(20, 20, 20)
+        doc.text(task.timestamp_label, mL + 26, y)
+        y += 6
+      }
 
-      doc.setFont('helvetica', 'bold')
-      doc.setTextColor(60, 60, 80)
-      doc.text('Loom Link:', mL, y)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(30, 70, 200)
-      doc.textWithLink(taskUrl, mL + 26, y, { url: taskUrl })
-      y += 8
+      // Explanation video link. Only rendered when there is a real Loom URL —
+      // PDF tasks without an embedded Loom link get NO link line (no fake URL).
+      if (taskUrl) {
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(60, 60, 80)
+        doc.text(isPdf ? 'Explanation:' : 'Loom Link:', mL, y)
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(30, 70, 200)
+        doc.textWithLink(taskUrl, mL + 26, y, { url: taskUrl })
+        y += 8
+      }
       hr(y); y += 6
 
       // Description
@@ -500,7 +527,9 @@ export default function Results() {
         for (let s = 0; s < shots.length; s++) {
           const shot = shots[s]
           const imgSrc = shot.image_base64 || shot.image_url
-          const shotUrl = shot.timestamp_seconds
+          // Loom screenshots deep-link to their frame; PDF screenshots only get
+          // a link if the task carries a real embedded Loom URL.
+          const shotUrl = (!isPdf && shot.timestamp_seconds)
             ? generateLoomUrlWithTimestamp(taskVid, shot.timestamp_seconds)
             : taskUrl
 
@@ -524,10 +553,12 @@ export default function Results() {
           y += 4
 
           if (!imgSrc) {
-            doc.setFontSize(9)
-            doc.setTextColor(30, 70, 200)
-            doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
-            y += 8
+            if (shotUrl) {
+              doc.setFontSize(9)
+              doc.setTextColor(30, 70, 200)
+              doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
+              y += 8
+            }
             continue
           }
 
@@ -565,28 +596,36 @@ export default function Results() {
             })
 
             doc.addImage(pdfImg, 'JPEG', mL, y, imgW, imgH)
-            doc.link(mL, y, imgW, imgH, { url: shotUrl })
+            if (shotUrl) doc.link(mL, y, imgW, imgH, { url: shotUrl })
             y += imgH + 3
-            doc.setFontSize(8)
-            doc.setFont('helvetica', 'normal')
-            doc.setTextColor(30, 70, 200)
-            doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
-            y += 8
+            if (shotUrl) {
+              doc.setFontSize(8)
+              doc.setFont('helvetica', 'normal')
+              doc.setTextColor(30, 70, 200)
+              doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
+              y += 8
+            }
           } catch {
-            doc.setFontSize(9)
-            doc.setTextColor(30, 70, 200)
-            doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
-            y += 8
+            if (shotUrl) {
+              doc.setFontSize(9)
+              doc.setTextColor(30, 70, 200)
+              doc.textWithLink(`▶ ${shotUrl}`, mL, y, { url: shotUrl })
+              y += 8
+            }
           }
         }
-      } else {
+      } else if (taskUrl) {
         doc.setFontSize(9)
         doc.setTextColor(30, 70, 200)
         doc.textWithLink(`▶ ${taskUrl}`, mL, y, { url: taskUrl })
         y += 8
       }
 
-      drawFooter(`Task ${i + 1} of ${tasks.length}  •  ${task.timestamp_label}`, taskUrl)
+      // Footer: Loom tasks show the timestamp; PDF tasks show the task index only.
+      const footerLabel = isPdf
+        ? `Task ${i + 1} of ${tasks.length}`
+        : `Task ${i + 1} of ${tasks.length}  •  ${task.timestamp_label}`
+      drawFooter(footerLabel, taskUrl)
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -626,7 +665,7 @@ export default function Results() {
     if (summary) {
       doc.addPage()
       summaryStartPage = doc.getNumberOfPages()
-      y = sectionHeader('Video Summary', 20)
+      y = sectionHeader(isPdf ? 'Document Summary' : 'Video Summary', 20)
       doc.setFontSize(10)
       doc.setFont('helvetica', 'normal')
       doc.setTextColor(25, 25, 25)
@@ -660,7 +699,7 @@ export default function Results() {
         priorityLabel(t.priority),
         t.complexity || nm,
         t.task_type || 'Nice-to-have',
-        generateLoomUrlWithTimestamp(videoIdForTask(t), t.timestamp_seconds),
+        explanationUrl(t),
       ]
       return multiVideoPdf ? [`${partColHeader} ${t.video_index || 1}`, ...baseRow] : baseRow
     })
@@ -805,7 +844,7 @@ export default function Results() {
 
     // Section: Summary
     if (summaryStartPage > 0) {
-      tocRow('Video Summary', summaryStartPage, 2, true)
+      tocRow(isPdf ? 'Document Summary' : 'Video Summary', summaryStartPage, 2, true)
     }
 
     // Section: Table
@@ -824,7 +863,7 @@ export default function Results() {
     }
     const titleSlug = tasks.length > 0 ? toSlug(tasks[0].task_name) : 'tasks'
     const dateSlug = new Date().toISOString().slice(0, 10)
-    doc.save(`loom-tasks-${titleSlug}-${dateSlug}.pdf`)
+    doc.save(`${isPdf ? 'pdf' : 'loom'}-tasks-${titleSlug}-${dateSlug}.pdf`)
   }
 
   // Derived: how many source videos this extraction spans. Single-video saves

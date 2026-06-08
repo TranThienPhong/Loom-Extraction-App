@@ -418,25 +418,26 @@ ${blocksText}
 Instructions:
 1. Look for blocks that describe something to fix, build, change, or improve. Common patterns: "TEAM:", "TASKS:", "BUG:", "MY DAY:", "ADMIN PAGE:", "PROJECTS:", "GLOBAL:" — these section prefixes usually mark a task. But also accept tasks without prefixes if the block clearly describes work.
 2. For each real task, create:
-   - A clear, actionable task_name (5-10 words). **PREFIX it with the page/section header it belongs under, formatted as "Header: Task name".** The header is the page or section the task sits under — either a standalone page header (e.g. "Account Page", "Job Roles", "Projects Page", "Admin Page") or the block's own leading section tag (e.g. "TEAM:", "TASKS:", "ADMIN PAGE:", "BUG:", "GLOBAL:", "MY DAY:"). Examples: "Account Page: Enable editing from job roles", "Admin Page: Add returned-tasks log". Do NOT start with a number or ordinal. If there is genuinely no section/page header for a task, omit the prefix.
+   - A clear, actionable task_name (5-10 words). **PREFIX it with the page/section header it belongs under, formatted as "Header: Task name".** The header is the page or section the task sits under — either a standalone page header (e.g. "Account Page", "Job Roles", "Projects Page", "Admin Page") or the block's own leading section tag (e.g. "TEAM:", "TASKS:", "ADMIN PAGE:", "BUG:", "GLOBAL:", "MY DAY:"). Examples: "Account Page: Enable editing from job roles", "Admin Page: Add returned-tasks log". Do NOT start with a number or ordinal. If there is genuinely no section/page header for a task, omit the prefix. The prefix is REQUIRED whenever the block has one — never drop it.
    - A concise task_description (2-3 sentences, ~50 words) summarizing what needs doing.
 3. The section prefix/header is ALSO a hint for the area or task_type — e.g., "BUG:" implies a fix task; "GLOBAL:" implies app-wide scope; a page name like "Admin Page" implies the area.
-4. For project, client, area, and assignee:
+4. **PRESERVE ORIGINAL CAPITALIZATION** of words the author wrote in capitals for emphasis. If the source says "It's very IMPORTANT", "NO ONE", "LEVEL UP", "VERY JUNIOR DEVELOPER", or "NOT", keep those words in the SAME capitalization in both task_name and task_description — do NOT lowercase or title-case them. The author capitalizes deliberately for emphasis and that emphasis must survive into the generated task. (You may still fix obvious all-caps section TAGS like "TEAM:" into "Team:" inside the prefix, but never alter emphasis words inside sentences.)
+5. For project, client, area, and assignee:
    - First try to extract them from the block text.
    - If not present in the text, pick the BEST matching option from the Reference Database above (if provided).
    - Leave empty ONLY if there is no reasonable match.
    - **ASSIGNEE — CRITICAL**: PDF text may have typos or abbreviated names. Fuzzy-match to the closest USERS entry (e.g. "Jonas"/"Yaunius"→Jaunius, "Phong"/"Fong"→Phong). Never leave the raw mispelled name.
-5. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). Default to 3.0 if not signaled.
-6. Complexity: one of "SupC", "COMP", "MOD", "SIMP".
-7. Task Type: "Need-to-have" only if the block explicitly marks urgency/blocking/critical. Otherwise "Nice-to-have".
-8. **source_block_index**: set to the Block # the task came from. This is REQUIRED — it's how we re-attach the right screenshots and Loom links.
+6. Priority: 1.1-4.9 scale (1.x=GAME OVER, 2.x=MAJOR LOSS, 3.x=MAJOR GAIN, 4.x=NICE-TO-HAVE). **If the block text states an explicit priority (e.g. "Priority 1.4", "PRIORITY 1.7", "Priority 2.1"), parse that exact number into the priority field.** Otherwise default to 3.0.
+7. Complexity: one of "SupC", "COMP", "MOD", "SIMP".
+8. Task Type: "Need-to-have" only if the block explicitly marks urgency/blocking/critical. Otherwise "Nice-to-have".
+9. **source_block_index**: set to the Block # the task came from. This is REQUIRED — it's how we re-attach the right screenshots and Loom links. The block is marked "[has loom link]" when a Loom video is attached — those tasks WILL get that Loom link as their explanation video automatically, so you do not need to repeat the URL in the description.
 
 If a single block contains MULTIPLE distinct tasks, return multiple task entries all sharing the same source_block_index.
 Skip blocks that aren't real tasks — don't pad the list.
 
 Return ONLY a JSON array with no additional text, explanation, or markdown formatting. Each object must have exactly these fields:
 {
-  "task_name": "<short descriptive title — no leading numbers or section prefix>",
+  "task_name": "<\"Section Header: short descriptive title\" — keep the section/page prefix; no leading numbers; preserve emphasis capitalization>",
   "task_description": "<concise description>",
   "priority": <number e.g. 3.0>,
   "complexity": "<SupC|COMP|MOD|SIMP>",
