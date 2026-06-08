@@ -688,6 +688,54 @@ export default function Results() {
     }
 
     const nm = 'Not mentioned'
+
+    // PDF exports embed each task's extracted screenshot as an "Image" column in
+    // the summary table so the task + its visual can be batch-uploaded into
+    // another app from a single sheet. autoTable's didDrawCell hook is sync, so
+    // thumbnails (with their pixel dimensions, for aspect-fit) are rendered to
+    // JPEG on a canvas up front. Loom exports keep the trailing clickable URL
+    // column instead (loom screenshots are video frames, not batch-upload art).
+    const showImageCol = isPdf
+    const taskPrimaryImage = (t: Task): string | null => {
+      const fromShots = t.screenshots?.find(s => s.image_base64 || s.image_url)
+      if (fromShots) return fromShots.image_base64 || fromShots.image_url || null
+      return t.image_base64 || t.image_url || null
+    }
+    const loadThumb = (src: string, maxW = 360): Promise<{ url: string; w: number; h: number }> =>
+      new Promise((resolve, reject) => {
+        const img = new window.Image()
+        img.onload = () => {
+          const baseW = img.width || maxW
+          const baseH = img.height || maxW
+          const scale = Math.min(1, maxW / baseW)
+          const w = Math.max(1, Math.round(baseW * scale))
+          const h = Math.max(1, Math.round(baseH * scale))
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          if (!ctx) { reject(new Error('no ctx')); return }
+          ctx.fillStyle = '#ffffff' // flatten any PNG transparency to white
+          ctx.fillRect(0, 0, w, h)
+          ctx.drawImage(img, 0, 0, w, h)
+          resolve({ url: canvas.toDataURL('image/jpeg', 0.82), w, h })
+        }
+        img.onerror = () => reject(new Error('thumb load failed'))
+        img.src = src
+      })
+
+    const thumbs: Array<{ url: string; w: number; h: number } | null> = []
+    if (showImageCol) {
+      for (const t of tasks) {
+        const src = taskPrimaryImage(t)
+        if (!src) { thumbs.push(null); continue }
+        try { thumbs.push(await loadThumb(src)) } catch { thumbs.push(null) }
+      }
+    }
+    // Image cell sits right after Title (after the optional part column).
+    const imageColIndex = showImageCol ? (multiVideoPdf ? 2 : 1) : -1
+    const IMG_CELL_MIN_H = 22 // mm — reserve enough row height for the thumbnail
+
     const tableRows = tasks.map((t) => {
       const baseRow = [
         t.task_name,
@@ -699,14 +747,60 @@ export default function Results() {
         priorityLabel(t.priority),
         t.complexity || nm,
         t.task_type || 'Nice-to-have',
-        explanationUrl(t),
       ]
+      if (showImageCol) baseRow.splice(1, 0, '') // '' placeholder; image drawn in didDrawCell
+      else baseRow.push(explanationUrl(t))       // Loom keeps the clickable URL column
       return multiVideoPdf ? [`${partColHeader} ${t.video_index || 1}`, ...baseRow] : baseRow
     })
 
-    const tableHead = multiVideoPdf
-      ? [[partColHeader, 'Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
-      : [['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']]
+    const baseHead = showImageCol
+      ? ['Title', 'Image', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type']
+      : ['Title', 'DESC.', 'Project', 'Client', 'Area', 'Assignee', 'Priority', 'Complexity', 'Type', 'Explanation URL']
+    const tableHead = [multiVideoPdf ? [partColHeader, ...baseHead] : baseHead]
+
+    // Column widths. PDF-with-image variant gives the screenshot a fixed column
+    // and lets DESC take the slack; Loom variants keep their original layout.
+    const pdfImageColStyles: Record<number, any> = {}
+    {
+      let ci = 0
+      if (multiVideoPdf) pdfImageColStyles[ci++] = { cellWidth: 10 }
+      pdfImageColStyles[ci++] = { cellWidth: 28 }                                       // Title
+      pdfImageColStyles[ci++] = { cellWidth: 30, halign: 'center', valign: 'middle' }   // Image
+      pdfImageColStyles[ci++] = { cellWidth: 'auto' as any }                            // DESC
+      pdfImageColStyles[ci++] = { cellWidth: 15 }                                       // Project
+      pdfImageColStyles[ci++] = { cellWidth: 13 }                                       // Client
+      pdfImageColStyles[ci++] = { cellWidth: 13 }                                       // Area
+      pdfImageColStyles[ci++] = { cellWidth: 15 }                                       // Assignee
+      pdfImageColStyles[ci++] = { cellWidth: 10 }                                       // Priority
+      pdfImageColStyles[ci++] = { cellWidth: 11 }                                       // Complexity
+      pdfImageColStyles[ci++] = { cellWidth: 13 }                                       // Type
+    }
+    const loomColStyles = multiVideoPdf
+      ? {
+          0: { cellWidth: 10 },
+          1: { cellWidth: 24 },
+          2: { cellWidth: 32 },
+          3: { cellWidth: 14 },
+          4: { cellWidth: 14 },
+          5: { cellWidth: 14 },
+          6: { cellWidth: 14 },
+          7: { cellWidth: 12 },
+          8: { cellWidth: 12 },
+          9: { cellWidth: 18 },
+          10: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
+        }
+      : {
+          0: { cellWidth: 24 },
+          1: { cellWidth: 36 },
+          2: { cellWidth: 16 },
+          3: { cellWidth: 16 },
+          4: { cellWidth: 16 },
+          5: { cellWidth: 16 },
+          6: { cellWidth: 12 },
+          7: { cellWidth: 12 },
+          8: { cellWidth: 18 },
+          9: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
+        }
 
     autoTable(doc, {
       startY: y,
@@ -721,6 +815,7 @@ export default function Results() {
         lineColor: [180, 180, 190] as [number, number, number],
         lineWidth: 0.2,
         overflow: 'linebreak',
+        valign: 'middle',
       },
       headStyles: {
         fillColor: [230, 232, 240] as [number, number, number],
@@ -731,38 +826,36 @@ export default function Results() {
       alternateRowStyles: {
         fillColor: [248, 249, 252] as [number, number, number],
       },
-      columnStyles: multiVideoPdf
-        ? {
-            0: { cellWidth: 10 },
-            1: { cellWidth: 24 },
-            2: { cellWidth: 32 },
-            3: { cellWidth: 14 },
-            4: { cellWidth: 14 },
-            5: { cellWidth: 14 },
-            6: { cellWidth: 14 },
-            7: { cellWidth: 12 },
-            8: { cellWidth: 12 },
-            9: { cellWidth: 18 },
-            10: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
-          }
-        : {
-            0: { cellWidth: 24 },
-            1: { cellWidth: 36 },
-            2: { cellWidth: 16 },
-            3: { cellWidth: 16 },
-            4: { cellWidth: 16 },
-            5: { cellWidth: 16 },
-            6: { cellWidth: 12 },
-            7: { cellWidth: 12 },
-            8: { cellWidth: 18 },
-            9: { cellWidth: 'auto' as any, textColor: [30, 70, 200] as [number, number, number] },
-          },
+      columnStyles: (showImageCol ? pdfImageColStyles : loomColStyles) as any,
       margin: { left: mL, right: mR },
+      didParseCell: (data: any) => {
+        // Reserve vertical room in image cells so the thumbnail isn't clipped.
+        if (showImageCol && data.section === 'body' && data.column.index === imageColIndex) {
+          data.cell.styles.minCellHeight = IMG_CELL_MIN_H
+        }
+      },
       didDrawCell: (data: any) => {
-        // Add a clickable link over every URL cell. Column index shifts to 10
-        // when the multi-video "Vid" column is prepended.
+        if (showImageCol) {
+          // Draw the task's screenshot, aspect-fit and centered, into its cell.
+          if (data.section === 'body' && data.column.index === imageColIndex) {
+            const thumb = thumbs[data.row.index]
+            if (thumb) {
+              const pad = 1.5
+              const maxW = data.cell.width - pad * 2
+              const maxH = data.cell.height - pad * 2
+              const ratio = Math.min(maxW / thumb.w, maxH / thumb.h)
+              const drawW = Math.max(1, thumb.w * ratio)
+              const drawH = Math.max(1, thumb.h * ratio)
+              const dx = data.cell.x + (data.cell.width - drawW) / 2
+              const dy = data.cell.y + (data.cell.height - drawH) / 2
+              try { doc.addImage(thumb.url, 'JPEG', dx, dy, drawW, drawH) } catch {}
+            }
+          }
+          return
+        }
+        // Loom: clickable link over the trailing URL cell.
         const urlColumn = multiVideoPdf ? 10 : 9
-        if (data.column.index === urlColumn && data.row.index >= 0 && data.row.section === 'body') {
+        if (data.column.index === urlColumn && data.row.index >= 0 && data.section === 'body') {
           const url = String(data.cell.raw || '')
           if (url.startsWith('http')) {
             doc.link(data.cell.x, data.cell.y, data.cell.width, data.cell.height, { url })

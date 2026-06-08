@@ -97,6 +97,40 @@ export default function Home() {
   const removeUrlAt = (i: number) =>
     setLoomUrls(prev => prev.length === 1 ? prev : prev.filter((_, idx) => idx !== i))
 
+  // Processing saves the result to the DB (history) BEFORE returning the big
+  // JSON response. On a slow/corporate network that response can be cut after
+  // the save — the client then throws even though the work is done (this is the
+  // "error on my boss's end but it's in History" case). When that happens we
+  // look up the freshly-saved row and route to /result/[id], which rebuilds the
+  // result from the DB. Returns the recovered row id, or null if none matches.
+  const findRecentResult = async (
+    src: 'pdf' | 'loom',
+    pdfName?: string,
+  ): Promise<string | null> => {
+    try {
+      const res = await fetch('/api/results', { cache: 'no-store' })
+      if (!res.ok) return null
+      const { results } = await res.json()
+      if (!Array.isArray(results)) return null
+      // Rows come back newest-first. Only consider ones created in the last few
+      // minutes so we never grab an unrelated older extraction.
+      const cutoff = Date.now() - 6 * 60 * 1000
+      const wantTitle = pdfName ? pdfName.replace(/\.pdf$/i, '').slice(0, 120) : null
+      for (const r of results) {
+        if (r.mode !== 'task' || r.source !== src) continue
+        const created = new Date(r.created_at).getTime()
+        if (Number.isFinite(created) && created < cutoff) continue
+        // For PDFs we can match the exact upload by its filename-derived title,
+        // which makes recovery safe even if several uploads happen close together.
+        if (src === 'pdf' && wantTitle && r.title !== wantTitle) continue
+        return r.id
+      }
+    } catch {
+      // best-effort — fall through to the normal error UI
+    }
+    return null
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -245,8 +279,25 @@ export default function Home() {
         setLoading(false)
       }
     } catch (error) {
-      setError({message: 'An error occurred while processing the video'})
       console.error(error)
+      // The request failed on the client — most often a large response dropped
+      // mid-transfer on a slow/corporate network. The server may have already
+      // finished and saved the result to History before the connection broke.
+      // Try to recover by routing to that saved row instead of dead-ending.
+      if (mode === 'task') {
+        const recoveredId = await findRecentResult(
+          taskSource,
+          taskSource === 'pdf' ? pdfFile?.name : undefined,
+        )
+        if (recoveredId) {
+          router.push(`/result/${recoveredId}`)
+          return
+        }
+      }
+      setError({
+        message:
+          'The connection dropped before the result finished loading. If you uploaded a large file, check the History section below — the result may have completed there.',
+      })
       setLoading(false)
     }
   }
