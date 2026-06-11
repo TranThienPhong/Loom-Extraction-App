@@ -67,10 +67,22 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
     //   2. HLS video+audio merge at ≤720p
     //   3. Any best format at ≤1080p
     //   4. Absolute fallback
+    //
+    // Some Loom videos have NO http-transcoded mp4 yet (the transcoded-url JSON
+    // comes back empty), leaving only fragmented HLS. yt-dlp's NATIVE HLS
+    // downloader is fragile there — fragments stall and the ".part-FragN.part →
+    // .part-FragN" renames fail ("[Errno 2] No such file or directory"), aborting
+    // the whole download. Hand HLS (m3u8) streams to ffmpeg, which pulls the
+    // playlist over a single connection into one file (no fragment churn), and
+    // add generous retries for transient fragment/network failures. The direct
+    // http-transcoded path is unaffected (ffmpeg is only used for m3u8).
     console.log(`Downloading video: ${loomUrl}`)
     const command = [
       'yt-dlp',
       '--no-playlist',
+      '--retries 10',
+      '--fragment-retries 10',
+      '--downloader "m3u8:ffmpeg"',
       '-f "best[protocol=https][height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best"',
       '--merge-output-format mp4',
       `--output "${outputPath}"`,
