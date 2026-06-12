@@ -69,20 +69,21 @@ export async function downloadLoomVideo(loomUrl: string): Promise<VideoDownloadR
     //   4. Absolute fallback
     //
     // Some Loom videos have NO http-transcoded mp4 yet (the transcoded-url JSON
-    // comes back empty), leaving only fragmented HLS. yt-dlp's NATIVE HLS
-    // downloader is fragile there — fragments stall and the ".part-FragN.part →
-    // .part-FragN" renames fail ("[Errno 2] No such file or directory"), aborting
-    // the whole download. Hand HLS (m3u8) streams to ffmpeg, which pulls the
-    // playlist over a single connection into one file (no fragment churn), and
-    // add generous retries for transient fragment/network failures. The direct
-    // http-transcoded path is unaffected (ffmpeg is only used for m3u8).
+    // comes back empty), leaving only fragmented HLS off luna.loom.com. Those
+    // segment URLs are pre-signed but the CDN ALSO requires a Referer header —
+    // yt-dlp's NATIVE downloader sends Loom's auth headers (incl. Referer), so it
+    // is the right tool here. (Do NOT delegate HLS to ffmpeg via
+    // `--downloader m3u8:ffmpeg`: the external ffmpeg process drops those headers
+    // and every segment comes back "HTTP error 403 Forbidden".) We add an explicit
+    // Referer for safety plus generous retries so a transient stalled/failed
+    // fragment is retried instead of aborting the whole download.
     console.log(`Downloading video: ${loomUrl}`)
     const command = [
       'yt-dlp',
       '--no-playlist',
-      '--retries 10',
-      '--fragment-retries 10',
-      '--downloader "m3u8:ffmpeg"',
+      '--retries 25',
+      '--fragment-retries 25',
+      '--add-headers "Referer:https://www.loom.com/"',
       '-f "best[protocol=https][height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=1080]/best"',
       '--merge-output-format mp4',
       `--output "${outputPath}"`,
